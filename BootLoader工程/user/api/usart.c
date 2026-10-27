@@ -479,13 +479,32 @@ void Usart3_Init(u32 brr)
     /*
     3.2 波特率设置，【重点】当前 STM32F103ZET6 USART3 对应时钟分支
         时钟基础频率为 36 MHz
+
+    ★★★ 这里曾经有一个很隐蔽的 bug，务必理解 ★★★
+    原来写的是：
+        float usart_div = 36000000 / 16 / brr;
+    看着像浮点运算，实际上【右边全是整型】：
+        36000000 / 16 = 2250000      （整数）
+        2250000 / 115200 = 19        （整数除法，小数被直接截断）
+        然后把 19 赋给 float → 19.0f
+    结果 mantissa = 19、fraction = 0，BRR = 0x130 = 304，
+    实际波特率 = 36000000/(16*19) = 118421，【误差 2.80%】。
+    串口一般只能容忍 2%~3%，2.8% 已经在悬崖边上，
+    表现就是偶尔收到乱码、或者高速下载时数据错位。
+    ★USART3 是 4G 模块的口，OTA 下载全走这里，这个误差会直接毁掉升级。★
+
+    正确做法：全程整数运算。
+    36000000/115200 = 312.5 → 取 312（这是 16×USARTDIV，也就是 BRR 的值）
+      → mantissa = 312/16 = 19
+      → fraction = 312 - 19*16 = 8      ← 注意 remainder 本身就是小数部分，不用再换算
+      → BRR = (19<<4)|8 = 0x138 = 312
+      → 实际 36000000/(16*(19+8/16)) = 115385，误差 0.16%  ✓
     */
-    float usart_div = 36000000 / 16 / brr;
+    u32 usart_div = 36000000 / brr;                                  // = 16×USARTDIV，也就是 BRR 值
+    u16 usart_mantissa = (u16)(usart_div / 16);                      // 整数部分
+    u16 usart_fraction = (u16)(usart_div - (u32)usart_mantissa * 16); // 小数部分（1/16 单位）
 
-    u16 usart_mantissa = (u16)usart_div;
-    u16 usart_fraction = (u16)((usart_div - usart_mantissa) * 16);
-
-    USART3->BRR = usart_mantissa << 4 | usart_fraction;
+    USART3->BRR = (u16)((usart_mantissa << 4) | usart_fraction);
 
     // 3.3 注册当前 USART3 对应 RXNE 和 IDLE 中断
     USART3->CR1 |= (0x01 << 5); // RXNE 使能
