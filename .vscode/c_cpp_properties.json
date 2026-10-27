@@ -1,71 +1,27 @@
 {
-  // ============================================================
-  //  STM32 OTA 项目 - IntelliSense 配置
-  //
-  //  ★ 为什么把 ARMCC 头文件放进工程？★
-  //  Keil 的安装路径每台电脑都不同（E:\ruanj\keil5、C:\Keil_v5 ...），
-  //  硬编码绝对路径会导致组员克隆后配置失效。
-  //  所以把 ARMCC 标准头文件复制到 tools/armcc_include/，
-  //  用相对路径引用，这样任何电脑克隆下来都能用。
-  //
-  //  ★ 切换工程 ★
-  //  Ctrl+Shift+P → C/C++: Select a Configuration...
-  //  选 STM32-APP 或 STM32-BootLoader
-  // ============================================================
   "configurations": [
     {
-      "name": "STM32-APP",
+      "name": "windows-gcc-x64",
       "includePath": [
-        "${workspaceFolder}/APP工程/user",
-        "${workspaceFolder}/APP工程/user/api",
-        "${workspaceFolder}/APP工程/libraries/CMSIS",
-        "${workspaceFolder}/APP工程/libraries/CMSIS/CM3",
-        "${workspaceFolder}/APP工程/libraries/STM32F10x_StdPeriph_Driver/inc",
-        "${workspaceFolder}/tools/armcc_include"
-      ],
-      "defines": [
-        "USE_STDPERIPH_DRIVER",
-        "STM32F10X_HD",
-        "VECT_TAB_OFFSET=0x8000"
-      ],
-      "compilerPath": "",
-      "cStandard": "c99",
-      "cppStandard": "c++11",
-      "intelliSenseMode": "gcc-arm",
-      "browse": {
-        "path": [
-          "${workspaceFolder}/APP工程/user",
-          "${workspaceFolder}/APP工程/libraries",
-          "${workspaceFolder}/tools/armcc_include"
-        ],
-        "limitSymbolsToIncludedHeaders": true
-      }
-    },
-    {
-      "name": "STM32-BootLoader",
-      "includePath": [
-        "${workspaceFolder}/BootLoader工程/user",
-        "${workspaceFolder}/BootLoader工程/user/api",
-        "${workspaceFolder}/BootLoader工程/libraries/CMSIS",
-        "${workspaceFolder}/BootLoader工程/libraries/CMSIS/CM3",
-        "${workspaceFolder}/BootLoader工程/libraries/STM32F10x_StdPeriph_Driver/inc",
-        "${workspaceFolder}/tools/armcc_include"
+        "${workspaceFolder}/**"
       ],
       "defines": [
         "USE_STDPERIPH_DRIVER",
         "STM32F10X_HD"
       ],
-      "compilerPath": "",
-      "cStandard": "c99",
-      "cppStandard": "c++11",
-      "intelliSenseMode": "gcc-arm",
+      "compilerPath": "E:/ruanj/ucrt64/bin/gcc.exe",
+      "cStandard": "${default}",
+      "cppStandard": "${default}",
+      "intelliSenseMode": "windows-gcc-x64",
       "browse": {
         "path": [
+          "${workspaceFolder}/APP工程/user",
+          "${workspaceFolder}/APP工程/libraries",
           "${workspaceFolder}/BootLoader工程/user",
           "${workspaceFolder}/BootLoader工程/libraries",
           "${workspaceFolder}/tools/armcc_include"
         ],
-        "limitSymbolsToIncludedHeaders": true
+        "limitSymbolsToIncludedHeaders": false
       }
     }
   ],
