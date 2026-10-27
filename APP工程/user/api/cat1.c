@@ -71,67 +71,64 @@
  *     模块发射瞬间要 1.2A，从开发板 5V 取电必须并联 470uF 电解电容，
  *     否则会把 STM32 的电压拉低导致复位。
  *=====================================================================*/
-#include "cat1.h"
-#include "usart.h"
-#include "delay.h"
-#include "spi.h"
 
-/*=====================================================================
- * 函数：CAT1_GPIO_Init
- * 负责：A
- *
- * ★★★ 重要：本工程用的 4G 模块是【成品底板】，不是裸模块 ★★★
- *
- * 实物引脚（6 个）：
- *     EN   VIN   GND   TX   RX   DTR
- *
- * 底板自带 DC-DC 降压 + 开机电路，【上电即工作】，
- * 实测 EN 悬空模块就能正常启动并响应 AT 指令。
- *
- * 所以【不需要】MCU 控制 PWRKEY / RESET / NET_STA：
- *   原方案的 PF0(PWRKEY)   → 底板无此脚，不用
- *   原方案的 PF1(RESET)    → 底板无此脚，不用
- *   原方案的 PF2(NET_STA)  → 底板无此脚，不用
- *   原方案的 PF3(STATUS)   → 底板无此脚，不用
- *
- * ===== 本函数要做什么 =====
- *   什么都不用做！
- *   串口（USART3）的初始化在 usart.c 的 Usart3_Init 里，
- *   不在这个函数里。
- *
- *   保留这个空函数是为了：
- *     1. 框架结构完整，其他模块可以照常调用
- *     2. 以后如果换成裸模块（需要控制 PWRKEY），改这里就行
- *
- * ===== 如果以后换成裸模块 =====
- *   取消下面的注释，按原方案配 PF0~PF3：
- *
- *     GPIO_InitTypeDef gpio;
- *     RCC_APB2PeriphClockCmd(CAT1_CTRL_CLK, ENABLE);
- *
- *     // PF0 PWRKEY：开漏（模块内部 1.8V 上拉，推挽会倒灌）
- *     gpio.GPIO_Pin   = PWRKEY_PIN;
- *     gpio.GPIO_Mode  = GPIO_Mode_Out_OD;
- *     gpio.GPIO_Speed = GPIO_Speed_50MHz;
- *     GPIO_Init(CAT1_CTRL_PORT, &gpio);
- *
- *     // PF1 RESET：推挽
- *     gpio.GPIO_Pin   = RESET_PIN;
- *     gpio.GPIO_Mode  = GPIO_Mode_Out_PP;
- *     GPIO_Init(CAT1_CTRL_PORT, &gpio);
- *
- *     // PF2/PF3：上拉输入
- *     gpio.GPIO_Pin  = NET_STA_PIN | STATUS_PIN;
- *     gpio.GPIO_Mode = GPIO_Mode_IPU;
- *     GPIO_Init(CAT1_CTRL_PORT, &gpio);
- *
- *     PWRKEY_HIGH();      // 初始释放
- *     RESET_HIGH();
- *====================================================================*/
-void CAT1_GPIO_Init(void)
-{
-    /* TODO【A】：实现 */
-}
+#include "cat1.h"
+// /*=====================================================================
+//  * 函数：CAT1_GPIO_Init
+//  * 负责：A
+//  *
+//  * ★★★ 重要：本工程用的 4G 模块是【成品底板】，不是裸模块 ★★★
+//  *
+//  * 实物引脚（6 个）：
+//  *     EN   VIN   GND   TX   RX   DTR
+//  *
+//  * 底板自带 DC-DC 降压 + 开机电路，【上电即工作】，
+//  * 实测 EN 悬空模块就能正常启动并响应 AT 指令。
+//  *
+//  * 所以【不需要】MCU 控制 PWRKEY / RESET / NET_STA：
+//  *   原方案的 PF0(PWRKEY)   → 底板无此脚，不用
+//  *   原方案的 PF1(RESET)    → 底板无此脚，不用
+//  *   原方案的 PF2(NET_STA)  → 底板无此脚，不用
+//  *   原方案的 PF3(STATUS)   → 底板无此脚，不用
+//  *
+//  * ===== 本函数要做什么 =====
+//  *   什么都不用做！
+//  *   串口（USART3）的初始化在 usart.c 的 Usart3_Init 里，
+//  *   不在这个函数里。
+//  *
+//  *   保留这个空函数是为了：
+//  *     1. 框架结构完整，其他模块可以照常调用
+//  *     2. 以后如果换成裸模块（需要控制 PWRKEY），改这里就行
+//  *
+//  * ===== 如果以后换成裸模块 =====
+//  *   取消下面的注释，按原方案配 PF0~PF3：
+//  *
+//  *     GPIO_InitTypeDef gpio;
+//  *     RCC_APB2PeriphClockCmd(CAT1_CTRL_CLK, ENABLE);
+//  *
+//  *     // PF0 PWRKEY：开漏（模块内部 1.8V 上拉，推挽会倒灌）
+//  *     gpio.GPIO_Pin   = PWRKEY_PIN;
+//  *     gpio.GPIO_Mode  = GPIO_Mode_Out_OD;
+//  *     gpio.GPIO_Speed = GPIO_Speed_50MHz;
+//  *     GPIO_Init(CAT1_CTRL_PORT, &gpio);
+//  *
+//  *     // PF1 RESET：推挽
+//  *     gpio.GPIO_Pin   = RESET_PIN;
+//  *     gpio.GPIO_Mode  = GPIO_Mode_Out_PP;
+//  *     GPIO_Init(CAT1_CTRL_PORT, &gpio);
+//  *
+//  *     // PF2/PF3：上拉输入
+//  *     gpio.GPIO_Pin  = NET_STA_PIN | STATUS_PIN;
+//  *     gpio.GPIO_Mode = GPIO_Mode_IPU;
+//  *     GPIO_Init(CAT1_CTRL_PORT, &gpio);
+//  *
+//  *     PWRKEY_HIGH();      // 初始释放
+//  *     RESET_HIGH();
+//  *====================================================================*/
+// void CAT1_GPIO_Init(void)
+// {
+//     /* TODO【A】：实现 */
+// }
 
 /*=====================================================================
  * 函数：CAT1_PowerOn
@@ -210,6 +207,7 @@ u8 CAT1_PowerOn(u16 timeout)
 u8 CAT1_SendAT(char *cmd, char *expect, u16 timeout_ms)
 {
     /* TODO【A】：实现 */
+    usart3_value;
     return 1;
 }
 

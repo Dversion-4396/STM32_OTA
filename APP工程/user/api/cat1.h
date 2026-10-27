@@ -14,7 +14,9 @@
  *====================================================================*/
 #ifndef __CAT1_H
 #define __CAT1_H
-
+#include "usart.h"
+#include "delay.h"
+#include "spi.h"
 #include "common.h"
 #define USART3_BRR (115200)
 /*==================== 串口定义 ====================*/

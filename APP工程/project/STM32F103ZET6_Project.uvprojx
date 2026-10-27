@@ -580,16 +580,6 @@
                 </FileArmAds>
               </FileOption>
             </File>
-            <File>
-              <FileName>spi.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\spi.c</FilePath>
-            </File>
-            <File>
-              <FileName>cat1.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\cat1.c</FilePath>
-            </File>
           </Files>
         </Group>
         <Group>
@@ -615,6 +605,21 @@
               <FileType>1</FileType>
               <FilePath>..\user\api\i2c.c</FilePath>
             </File>
+             <File>
+              <FileName>spi.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\user\api\spi.c</FilePath>
+            </File>
+            <File>
+              <FileName>cat1.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\user\api\cat1.c</FilePath>
+            </File>
+        <File>
+          <FileName>eeprom.c</FileName>
+          <FileType>1</FileType>
+          <FilePath>..\user\api\eeprom.c</FilePath>
+        </File>
           </Files>
         </Group>
       </Groups>

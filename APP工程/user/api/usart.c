@@ -145,7 +145,7 @@ void USART1_IRQHandler(void)
         Usart1_SendString("IDLE : ");
         Usart1_SendBuffer(usart1_value.data, usart1_value.count);
         Usart1_SendString("\r\n");
-
+        
         GPIO_SetBits(GPIOD, GPIO_Pin_7);
         Usart2_SendBuffer(usart1_value.data, usart1_value.count);
         Usart2_SendString("\r\n");
