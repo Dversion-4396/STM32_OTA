@@ -16,7 +16,7 @@
 #define __CAT1_H
 
 #include "common.h"
-
+#define USART3_BRR (115200)
 /*==================== 串口定义 ====================*/
 #define CAT1_UART           USART3
 #define CAT1_printf         Usart3_SendString
