@@ -5,6 +5,7 @@
     "ms-vscode.vscode-serial-monitor"
   ],
   "unwantedRecommendations": [
+    "franneck94.c-cpp-runner",
     "dan-c-underwood.arm",
     "danwakeem.asm"
   ]
