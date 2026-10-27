@@ -227,3 +227,63 @@ A: 按顺序检查：① 电源是否独立（要 1.2A）② P5 跳线是否拔�
 ## 许可
 
 本项目仅用于学习和研究。
+
+---
+
+## 🔗 仓库信息
+
+**地址**：https://github.com/Dversion-4396/STM32_OTA
+
+**分支**：
+
+| 分支 | 用途 | 谁用 |
+|---|---|---|
+| `main` | 主分支（稳定版） | 全员 |
+| `dev-A` | A 的开发分支 | A（4G） |
+| `dev-B` | B 的开发分支 | B（BootLoader） |
+| `dev-C` | C 的开发分支 | C（MQTT） |
+| `dev-D` | D 的开发分支 | D（SPI） |
+
+---
+
+## 🚀 组员快速上手（三步）
+
+### 第一步：克隆
+
+```bash
+git clone https://github.com/Dversion-4396/STM32_OTA.git
+cd STM32_OTA
+```
+
+### 第二步：切到自己的分支
+
+```bash
+# A 就切 dev-A，B 就切 dev-B，以此类推
+git checkout dev-A
+```
+
+### 第三步：改代码 → 一键提交
+
+双击运行 **`一键提交.bat`**，按提示输入提交说明即可。
+
+或者手动：
+
+```bash
+git add -A
+git commit -m "feat(A): 实现 CAT1_SendAT"
+git pull --rebase
+git push
+```
+
+---
+
+## 📖 详细协作说明
+
+见 [docs/团队协作指南.md](docs/团队协作指南.md)
+
+包含：
+- Git 安装配置
+- 日常开发流程
+- 提交信息规范
+- 冲突解决
+- 常见问题
