@@ -75,6 +75,17 @@ MQTT_CB Bemfa_mqtt;
 void MQTT_Init(void)
 {
     /* TODO【C】：实现 */
+    // ClientID
+    sprintf(Bemfa_mqtt.ClientID,"client");
+    // username 
+    sprintf(Bemfa_mqtt.Username,USERNAME_KEY);
+    // password 
+    sprintf(Bemfa_mqtt.Passward,USERNAME_KEY);
+    // Server IP 
+    sprintf(Bemfa_mqtt.ServerIP,SERVER_IP);
+    // Serrver Port
+    Bemfa_mqtt.ServerPort = SERVER_PORT;
+    // 订阅 Topic 
 }
 
 /*=====================================================================
@@ -106,6 +117,80 @@ void MQTT_Init(void)
 u8 MQTT_ConnectBemfa(void)
 {
     /* TODO【C】：实现 */
+    // 1. 初始化设备
+	Usart1_Init(USART1_BRR);
+	Usart3_Init(USART3_BRR);
+	
+	/*
+	进入 WiFi 模块操作，需要发送 AT 指令
+	*/
+	
+	// 1. 发送 "AT\r\n" 到 WiFi 模块
+	Usart3_SendString("AT\r\n");
+	/*
+	在每一条 AT 指令之间，需要预留一定的延时，满足 WiFi 模块对 AT 指令处理
+	和响应所需必要时间。通常情况下时间 2 ~ 5 秒
+	*/
+	delay_ms(2000);
+	
+	// 2. 设置当前 WiFi 模块对应的工作模式为 STA 模式
+	/*
+	AT+CWMODE 设置当前 WiFi 模块对应工作模式
+		1. AT+CWMODE 已淘汰，但是可以使用
+		2. AT+CWMODE_CUE 设置当前 WiFi 工作模式，不储存到 Flash 下次启动
+			无记录，需要重新配置
+		3. AT+CWMODE_DEF 设置当前 WiFi 工作模式，存储到 Flash 下次启动直
+			接使用当前配置
+	*/
+	Usart3_SendString("AT+CWMODE_CUR=1\r\n");
+	delay_ms(2000);
+	
+	/*
+	3. 扫描当前可用 AP 热点信息
+	*/
+	Usart3_SendString("AT+CWLAP\r\n");
+	delay_ms(3000);
+	
+	/*
+	4. 连接目标热点，需要提供
+		1. 热点对应 SSID
+		2. 热点对应 密码
+		3. 【重点】当前 AP 热点必须是 2.4 GHz 频段。
+	要求提供的 AT 指令为
+		AT+CWJAP="你的WiFi名称","你的WiFi密码"
+		要求 WiFi 名称和对应密码必须在 AT 指令中是字符串形式，
+		因为本身 AT 指令就是字符串形式，需要提供转移字符进行处理
+	*/
+	char at_cmd[64] = "";
+	sprintf(at_cmd,"AT+CWJAP=\"%s\",\"%s\"\r\n",AP_SSID,AP_PSK);
+	Usart3_SendBuffer(at_cmd,strlen(at_cmd));
+	
+	delay_ms(10000);
+	
+	/*
+	5. 发送 AT + CIFSR 到 WiFi 模块查看当前连接网络情况
+	*/
+	Usart3_SendString("AT+CIFSR\r\n");
+	delay_ms(3000);
+
+    memset(at_cmd,0,64);
+	sprintf(at_cmd,"AT+CIPSTART=\"TCP\",\"%s\",%d\r\n",MQTT_SERVER_IP_ADDR,MQTT_SERVER_PORT);
+	Usart3_SendBuffer(at_cmd,strlen(at_cmd));
+	delay_ms(2000);
+
+    Usart3_SendString("AT+CIPMODE=1\r\n");
+	delay_ms(2000);
+	
+	Usart3_SendString("AT+CIPSEND\r\n");
+	delay_ms(2000);
+	
+	/*
+	需要在透传模式开启工作之后，发送 MQTT 数据包，此时 WiFi 模块会直接将所有的数据内容
+	直接发送到——连接的 TCP 远端服务。
+	*/
+    MQTT_ConectPack();
+	
+	delay_ms(2000);
     return 1;
 }
 
@@ -119,6 +204,50 @@ u8 MQTT_ConnectBemfa(void)
 void MQTT_ConectPack(void)
 {
     /* TODO【C】：从 36 号工程移植 */
+    int temp;              //计算报文剩余长度时，使用的临时变量              
+	int Remaining_len;     //保存报文剩余长度字节 
+	
+	Bemfa_mqtt.MessageID = 0;  //报文标识符清零，CONNECT报文虽然不需要添加报文标识符，但是CONNECT报文是第一个发送的报文，在此清零报文标识符，为后续报文做准备
+	Bemfa_mqtt.Fixed_len = 1;                                                                                                        //CONNECT报文，固定报头长度暂定为1
+	Bemfa_mqtt.Variable_len = 10;                                                                                                    //CONNECT报文，可变报头长度=10
+	Bemfa_mqtt.Payload_len = 2 + strlen(Bemfa_mqtt.ClientID) + 2 + strlen(Bemfa_mqtt.Username) + 2 + strlen(Bemfa_mqtt.Passward); //CONNECT报文，计算负载长度      
+	Remaining_len = Bemfa_mqtt.Variable_len + Bemfa_mqtt.Payload_len;                                                               //剩余长度=可变报头长度+负载长度
+	
+	Bemfa_mqtt.Pack_buff[0]=0x10;                                   //CONNECT报文 固定报头第1个字节 ：0x10	
+	do{                                                              //循环处理固定报头中的剩余长度字节，字节量根据剩余字节的真实长度变化
+		temp = Remaining_len%128;                                    //剩余长度取余128
+		Remaining_len = Remaining_len/128;                           //剩余长度取整128
+		if(Remaining_len>0) temp |= 0x80;                            //如果Remaining_len大于等于128了 按协议要求位7置位                   				     
+		Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len] = temp;         //剩余长度字节记录一个数据
+		Bemfa_mqtt.Fixed_len++;	                                 //固定报头总长度+1    
+	}while(Remaining_len>0);                                         //如果Remaining_len>0的话，再次进入循环
+	
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+0]=0x00;             //CONNECT报文，可变报头第1个字节 ：固定0x00	            
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+1]=0x04;             //CONNECT报文，可变报头第2个字节 ：固定0x04
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+2]=0x4D;	         //CONNECT报文，可变报头第3个字节 ：固定0x4D
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+3]=0x51;	         //CONNECT报文，可变报头第4个字节 ：固定0x51
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+4]=0x54;	         //CONNECT报文，可变报头第5个字节 ：固定0x54
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+5]=0x54;	         //CONNECT报文，可变报头第6个字节 ：固定0x54
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+6]=0x04;	         //CONNECT报文，可变报头第7个字节 ：固定0x04
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+7]=0xC2;	         //CONNECT报文，可变报头第8个字节 ：使能用户名和密码校验，不使用遗嘱功能，不保留会话功能
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+8]=0x00; 	         //CONNECT报文，可变报头第9个字节 ：保活时间高字节 0x00
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+9]=0x64;	         //CONNECT报文，可变报头第10个字节：保活时间高字节 0x64   最终值=100s
+	
+	/*     CLIENT_ID      */
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+10] = strlen(Bemfa_mqtt.ClientID)/256;                			  		                                           //客户端ID长度高字节
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+11] = strlen(Bemfa_mqtt.ClientID)%256;               			  		                                           //客户端ID长度低字节
+	memcpy(&Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+12],Bemfa_mqtt.ClientID,strlen(Bemfa_mqtt.ClientID));                                                    //复制过来客户端ID字串	
+	/*     用户名        */ 
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+12+strlen(Bemfa_mqtt.ClientID)] = strlen(Bemfa_mqtt.Username)/256; 	                                               //用户名长度高字节
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+13+strlen(Bemfa_mqtt.ClientID)] = strlen(Bemfa_mqtt.Username)%256; 		                                           //用户名长度低字节
+	memcpy(&Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+14+strlen(Bemfa_mqtt.ClientID)],Bemfa_mqtt.Username,strlen(Bemfa_mqtt.Username));                           //复制过来用户名字串	
+	/*      密码        */
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+14+strlen(Bemfa_mqtt.ClientID)+strlen(Bemfa_mqtt.Username)] = strlen(Bemfa_mqtt.Passward)/256;	                        //密码长度高字节
+	Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+15+strlen(Bemfa_mqtt.ClientID)+strlen(Bemfa_mqtt.Username)] = strlen(Bemfa_mqtt.Passward)%256;	                        //密码长度低字节
+	memcpy(&Bemfa_mqtt.Pack_buff[Bemfa_mqtt.Fixed_len+16+strlen(Bemfa_mqtt.ClientID)+strlen(Bemfa_mqtt.Username)],Bemfa_mqtt.Passward,strlen(Bemfa_mqtt.Passward));   //复制过来密码字串
+   
+	// TxDataBuf_Deal(Bemfa_mqtt.Pack_buff, Bemfa_mqtt.Fixed_len + Bemfa_mqtt.Variable_len + Bemfa_mqtt.Payload_len); //加入发送数据缓冲区
+    Usart3_SendBuffer(Bemfa_mqtt.Pack_buff,Bemfa_mqtt.Fixed_len + Bemfa_mqtt.Variable_len + Bemfa_mqtt.Payload_len);
 }
 
 /*=====================================================================

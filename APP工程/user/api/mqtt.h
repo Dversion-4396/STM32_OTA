@@ -56,6 +56,11 @@
 #define TOPIC_SIZE         128             /* 单个 Topic 最大长度 */
 #define MQTT_PACKAGE_SIZE  512             /* MQTT 报文缓冲区大小 */
 
+/*=====================巴法云相关宏定义=====================*/
+#define USERNAME_KEY "a0f83060ae0a4750a09d1607611f3b32" // 巴法云平台秘钥
+#define SERVER_IP "bemfa.com"                           // 巴法云订阅主题地址
+#define SERVER_PORT (9501)                              // 巴法云订阅主题端口号
+
 /*=====================================================================
  * MQTT 会话结构体
  *
@@ -77,6 +82,12 @@ typedef struct{
     int  Fixed_len;                         /* 固定头长度 */
     int  Variable_len;                      /* 可变头长度 */
     int  Payload_len;                       /* 载荷长度 */
+
+    /*===============WIFI模块宏定义====================*/
+    #define AP_SSID "kskbl"
+    #define AP_PSK "zdjdwczkbl"
+    #define MQTT_SERVER_IP_ADDR "bemfa.com"
+    #define MQTT_SERVER_PORT (9501)
 
     /*---------- 订阅的 Topic 列表 ----------*/
     char Stopic_Buff[TOPIC_NUM][TOPIC_SIZE];
