@@ -21,7 +21,7 @@
     "${workspaceFolder}/libraries/CMSIS",
     "${workspaceFolder}/libraries/CMSIS/CM3",
     "${workspaceFolder}/libraries/STM32F10x_StdPeriph_Driver/inc",
-    "${workspaceFolder}/../tools/armcc_include"
+    "${workspaceFolder}/../tools/stub_include"
   ],
   "C_Cpp.default.defines": [
     "USE_STDPERIPH_DRIVER",

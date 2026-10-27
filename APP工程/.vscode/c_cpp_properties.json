@@ -1,4 +1,29 @@
 {
+  // ============================================================
+  //  STM32 OTA - APP工程 IntelliSense 配置
+  //
+  //  ★ 这套配置的定位 ★
+  //  VS Code 只用来看代码和补全，实际编译在 Keil 里做。
+  //  所以只需要 IntelliSense 认识类型名，不需要真实的标准库实现。
+  //
+  //  ★ tools/stub_include/ 是什么 ★
+  //  9 个手写的最小化标准头文件（共 10KB）：
+  //    stdint.h  stddef.h  stdio.h  stdlib.h  string.h
+  //    stdarg.h  stdbool.h  limits.h  math.h
+  //  只提供类型定义和函数声明，零依赖，任何编译器都能解析。
+  //  它们只影响 IntelliSense 显示，不参与 Keil 编译。
+  //
+  //  ★ 为什么不用真实编译器头文件 ★
+  //    ARMCC 的：用 __int64 / _ARMABI，GCC 模式解析失败
+  //    MinGW 的：依赖 Windows CRT（crtdefs.h），链路断裂
+  //  两者都试过，都走不通，所以手写一套最稳。
+  //
+  //  ★ 补全功能完整保留 ★
+  //    - 项目类型：u8 / u32 / GPIO_TypeDef / USART_Data ...
+  //    - 标准函数：memcpy / sprintf / strstr ...
+  //    - 结构体成员自动提示
+  //    - 跳转到定义、查找引用
+  // ============================================================
   "configurations": [
     {
       "name": "STM32-APP",
@@ -8,7 +33,7 @@
         "${workspaceFolder}/libraries/CMSIS",
         "${workspaceFolder}/libraries/CMSIS/CM3",
         "${workspaceFolder}/libraries/STM32F10x_StdPeriph_Driver/inc",
-        "${workspaceFolder}/../tools/gcc_include"
+        "${workspaceFolder}/../tools/stub_include"
       ],
       "defines": [
         "USE_STDPERIPH_DRIVER",
@@ -22,7 +47,7 @@
         "path": [
           "${workspaceFolder}/user",
           "${workspaceFolder}/libraries",
-          "${workspaceFolder}/../tools/gcc_include"
+          "${workspaceFolder}/../tools/stub_include"
         ],
         "limitSymbolsToIncludedHeaders": false
       }

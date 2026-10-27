@@ -1,4 +1,8 @@
 {
+  // ============================================================
+  //  STM32 OTA - BootLoader工程 IntelliSense 配置
+  //  详细说明见 APP工程/.vscode/c_cpp_properties.json
+  // ============================================================
   "configurations": [
     {
       "name": "STM32-BootLoader",
@@ -8,7 +12,7 @@
         "${workspaceFolder}/libraries/CMSIS",
         "${workspaceFolder}/libraries/CMSIS/CM3",
         "${workspaceFolder}/libraries/STM32F10x_StdPeriph_Driver/inc",
-        "${workspaceFolder}/../tools/gcc_include"
+        "${workspaceFolder}/../tools/stub_include"
       ],
       "defines": [
         "USE_STDPERIPH_DRIVER",
@@ -22,7 +26,7 @@
         "path": [
           "${workspaceFolder}/user",
           "${workspaceFolder}/libraries",
-          "${workspaceFolder}/../tools/gcc_include"
+          "${workspaceFolder}/../tools/stub_include"
         ],
         "limitSymbolsToIncludedHeaders": false
       }
