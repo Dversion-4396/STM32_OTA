@@ -180,54 +180,72 @@ u8 CAT1_SendAT(char *cmd, char *expect, u16 timeout_ms)
 }
 u8 CAT1_ActiveGPRS(void)
 {
-    u8 timemout = 60;
-    if (!CAT1_SendAT("AT+CPIN?", "READY", 3000))
-    {
-        Usart1_SendString("SIM卡未准备好\r\n");
-        return 1;
-    }
-    while (timemout--)
-    {
-        if (CAT1_SendAT("AT+CREG?", ",1", 2000) == 0)
-        {
-            break;
-        }
-        if (CAT1_SendAT("AT+CREG?", ",5", 2000) == 0)
-        {
-            break;
-        }
+    u16 i;
 
-        delay_ms(1000);
-        if (!timemout)
-        {
-            Usart1_SendString("网络注册超时\r\n");
-            return 1;
-            /* code */
-        }
-    }
-    if (!CAT1_SendAT("AT+CGDCONT=1,\"IP\",\"CMNET\"", "OK", 3000))
+    /*------------------------------------------------------------------
+     * ★★★ 重要：CAT1_SendAT 的返回值约定 ★★★
+     *   返回 0 = 收到期望关键字 = 成功
+     *   返回 1 = 超时 = 失败
+     *
+     * 所以"失败才报错"要写成：  if (CAT1_SendAT(...))  { 报错 }
+     * 千万不要写成：            if (!CAT1_SendAT(...)) { 报错 }  ← 反了！
+     *------------------------------------------------------------------*/
+
+    /*---------- 1. SIM 卡就绪 ----------*/
+    if (CAT1_SendAT("AT+CPIN?", "READY", 3000))
     {
-        Usart1_SendString("设置APN失败\r\n");
+        Usart1_SendString("[GPRS] SIM卡未就绪\r\n");
         return 1;
-        /* code */
     }
+    Usart1_SendString("[GPRS] SIM卡就绪\r\n");
+
+    /*---------- 2. 等网络注册（最多 60 秒）----------*/
+    for (i = 0; i < 60; i++)
+    {
+        if (CAT1_SendAT("AT+CREG?", ",1", 2000) == 0) break;   /* 本地注册 */
+        if (CAT1_SendAT("AT+CREG?", ",5", 2000) == 0) break;   /* 漫游注册 */
+        delay_ms(1000);
+    }
+    if (i >= 60)
+    {
+        Usart1_SendString("[GPRS] 网络注册超时\r\n");
+        return 2;
+    }
+    Usart1_SendString("[GPRS] 网络已注册\r\n");
+
+    /*---------- 3. 设置 PDP 上下文 ----------*/
+    if (CAT1_SendAT("AT+CGDCONT=1,\"IP\",\"CMNET\"", "OK", 3000))
+    {
+        Usart1_SendString("[GPRS] 设置APN失败\r\n");
+        return 3;
+    }
+
+    /*---------- 4. 附着 GPRS ----------*/
     if (CAT1_SendAT("AT+CGATT=1", "OK", 10000))
     {
-        Usart1_SendString("附着失败\r\n");
-        return 1;
-        /* code */
+        Usart1_SendString("[GPRS] 附着失败\r\n");
+        return 4;
     }
-    if (!CAT1_SendAT("AT+CGACT=1,1", "OK", 20000))
+
+    /*---------- 5. 激活 PDP ----------*/
+    if (CAT1_SendAT("AT+CGACT=1,1", "OK", 20000))
     {
-        Usart1_SendString("激活失败\r\n");
-        return 1;
-        /* code */
+        Usart1_SendString("[GPRS] 激活PDP失败\r\n");
+        return 5;
     }
+
+    /*---------- 6. 确认拿到 IP ----------*/
     if (CAT1_SendAT("AT+CGPADDR=1", "+CGPADDR:", 5000))
     {
-        Usart1_SendString("未拿到IP\r\n");
-        return 1;
+        Usart1_SendString("[GPRS] 未拿到IP\r\n");
+        return 6;
     }
+
+    /*---------- 打印 IP ----------*/
+    Usart1_SendString("[GPRS] IP: ");
+    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
+    Usart1_SendString("\r\n");
+
     Usart1_SendString("[GPRS] 成功\r\n");
     return 0;
 }

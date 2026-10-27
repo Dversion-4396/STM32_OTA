@@ -473,13 +473,33 @@ void Usart3_Init(u32 brr)
     /*
     3.2 波特率设置，【重点】当前 STM32F103ZET6 USART3 对应时钟分支
         时钟基础频率为 36 MHz
+
+    ★★★ 必须用整数运算，不能用 float ★★★
+      原来用的是 float 算法：
+          float usart_div = 36000000 / 16 / brr;
+          u16 mantissa = (u16)usart_div;
+          u16 fraction = (u16)((usart_div - mantissa) * 16);
+      问题：
+        1. ARMCC 下 float 运算会链接浮点库，代码体积大、速度慢
+        2. 更严重：36000000 / 16 / brr 里 36000000 是 int，
+           16 是 int，brr 是 u32 → 结果被当整数算，小数部分丢失！
+           例如 brr=115200：36000000/16=2250000，2250000/115200=19（不是 19.53125）
+           这样算出来的 BRR 是错的，波特率偏差大，通信失败。
+
+      改用和 Usart1_Init 一致的整数算法（已实测正确）：
+        BRR 高 12 位 = 整数部分
+        BRR 低 4 位  = 小数部分（1/16 单位）
     */
-    float usart_div = 36000000 / 16 / brr;
-
-    u16 usart_mantissa = (u16)usart_div;
-    u16 usart_fraction = (u16)((usart_div - usart_mantissa) * 16);
-
-    USART3->BRR = usart_mantissa << 4 | usart_fraction;
+    u32 usart_div = 36000000 / brr;                              /* 16 倍的 USARTDIV */
+    u16 usart_mantissa = usart_div / 16;                         /* 整数部分 */
+    u32 usart_remainder = usart_div - usart_mantissa * 16;       /* 余数 */
+    u16 usart_fraction = (usart_remainder * 16 + brr / 2) / brr; /* 小数部分，四舍五入 */
+    if (16 == usart_fraction)                                    /* 0.999 这种情况要进位 */
+    {
+        usart_fraction = 0;
+        usart_mantissa += 1;
+    }
+    USART3->BRR = (usart_mantissa << 4) | usart_fraction;
 
     // 3.3 注册当前 USART3 对应 RXNE 和 IDLE 中断
     USART3->CR1 |= (0x01 << 5); // RXNE 使能
