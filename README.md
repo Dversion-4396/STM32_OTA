@@ -369,3 +369,48 @@ git push
 - 冲突解决
 - 常见问题
 
+
+---
+
+## ⚠️ 重要：IROM1 启动地址配置（三个阶段不同）
+
+做 OTA 时最容易踩的坑：**APP 工程的启动地址必须按阶段切换**，改错了程序根本不会运行。
+
+| 阶段 | 工程 | IROM1 | VECT_TAB_OFFSET | 说明 |
+|---|---|---|---|---|
+| **① 单独调 APP**<br>（现在这个阶段） | APP工程 | `0x08000000` / `0x80000` | `0x0` | 板子上没烧 BootLoader，APP 必须从 0 开始 |
+| **② 集成 OTA** | APP工程 | `0x08008000` / `0x78000` | `0x8000` | 给 BootLoader 让出 32KB |
+| **③ BootLoader** | BootLoader工程 | `0x08000000` / `0x8000` | `0x0` | 一直不变 |
+
+### 怎么改
+
+**IROM1**：Keil → Options for Target → Target 标签 → 右侧 IROM1 的 Start / Size
+
+**VECT_TAB_OFFSET**：改 `APP工程/libraries/CMSIS/system_stm32f10x.c`
+
+```c
+/* 阶段①（单独调 APP）*/
+#define VECT_TAB_OFFSET  0x0
+
+/* 阶段②（集成 OTA）*/
+#define VECT_TAB_OFFSET  0x8000
+```
+
+### 症状对照
+
+| 现象 | 原因 |
+|---|---|
+| 烧录成功但串口完全没输出 | **IROM1 和 VECT_TAB_OFFSET 不匹配** —— 程序跑飞了 |
+| 程序能跑但中断不进 | VECT_TAB_OFFSET 改了但 IROM1 没改（或反过来） |
+
+**这两个必须成对修改**，只改一个会出问题。
+
+### 串口波特率
+
+USART1（接电脑）默认 **9600**，定义在 `APP工程/user/api/common.h`：
+
+```c
+#define USART1_BRR 9600
+```
+
+**串口助手的波特率必须和这个一致**，否则收到的全是乱码或不显示。

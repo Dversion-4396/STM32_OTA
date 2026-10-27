@@ -4,7 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-
+#define USART1_BRR 9600
+#define USART2_BRR 115200
+#define USART3_BRR 115200
 #define RCC_APB2_AFIO_CLOCK_ENABLE (0x01)
 /// gpio 口相关参数
 #define RCC_APB2_GPIOA_CLOCK_ENABLE (0X01 << 2)

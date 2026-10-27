@@ -78,80 +78,44 @@ void Usart1_Init(u32 brr)
 
 void USART1_IRQHandler(void)
 {
-    if (usart1_value.flag)
-    {
-        memset(&usart1_value, 0, sizeof(USART_Data));
-    }
-    GPIO_SetBits(GPIOD, GPIO_Pin_7);
+    /*------------------------------------------------------------------
+     * USART1 中断服务函数（PA9=TX / PA10=RX，接 CH340 到电脑）
+     *
+     * ★★ 中断里绝对不能调用 SendString / SendBuffer ★★
+     *
+     * 原因：Usart1_SendByte 里有 while(!(USART1->SR & TC)) 死等 TC 标志。
+     *       如果在中断里发送，而主程序正在发送（TC 还没置位），
+     *       中断抢进来后又等同一个 TC → 永久死锁，串口彻底不工作。
+     *
+     * 原来的代码在中断里做了这些危险操作：
+     *   1. Usart1_SendString("RXNE : ") / ("IDLE : ")   → 死锁
+     *   2. Usart2_SendBuffer(...)                        → USART2 没初始化时死锁
+     *   3. GPIO_SetBits(GPIOD, ...)                      → 与串口无关，多余
+     *   4. if(flag) memset 清整个结构体                   → 数据丢失
+     *
+     * 现在改为：只收数据、只置标志，业务逻辑交给主循环
+     *------------------------------------------------------------------*/
 
-    /*
-    【处理 RXNE 中断】
-        1. 根据 USART1->SR 状态寄存器判断是否为 RXNE 中断触发
-        2. 【重点，清除中断标志位】
-            软件清除根据文档要求，是对 USART1->DR 读取操作即可清除
-        3. 【数据存储到临时缓冲区】
-            需要将 USART1->DR 寄存器中的数据，存储到 USART1_Data 底层
-            u8 类型数组中。
-    【特殊情况】
-        当前 USART1_Data 底层数组有效元素个数已满 == USART1_BUFFER_SIZE
-        需要对当前已接收数据进行处理，才可以进行后续的数据接收。
-    */
+    /*---------- 1. RXNE：收到一个字节 ----------*/
     if (USART1->SR & (0x01 << 5))
     {
-        /*
-        1. 数据需要存储到 USART1_Data 底层 u8 类型 data 数组中
-        2. usart1_value.count++ 作为下标操作，先提供数据，在累加数值
-            可以满足数组【尾插法】方式数据添加
-        3. USART1->DR 对当前 DR 进行读取操作，提取数据，同时【清除中断】
-        */
-        usart1_value.data[usart1_value.count++] = USART1->DR;
-
-        if (USART1_BUFFER_SIZE == usart1_value.count)
+        if (usart1_value.count < USART1_BUFFER_SIZE)
         {
-            // 数据已满，flag 标志位为 1
-            usart1_value.flag = 1;
-
-            // 当前 USART1_Data 底层数据已满，需要对数据进行处理
-            // 【TODO】当前操作是临时数据，非后续唯一处理方式。
-
-            // 将数据通过 USART1 发送到当前 PC 串口调试工具
-            Usart1_SendString("RXNE : ");
-            Usart1_SendBuffer(usart1_value.data, usart1_value.count);
-            Usart1_SendString("\r\n");
+            usart1_value.data[usart1_value.count++] = USART1->DR;
+        }
+        else
+        {
+            /* 缓冲满，读掉丢弃，防止溢出 */
+            USART1->DR;
         }
     }
-    /*
-    【处理 IDLE 中断】
-        1. 根据 USART1->SR 状态寄存器判断是否为 IDLE 中断触发
-        2. 【重点，清除中断标志位】
-            通过软件序列进行中断标志位清除
-            先读取 USART1->SR，再读取 USART1->DR
-        3. 【数据处理】
-            IDLE 表示数据发送完成，进行数据的必要处理
-    */
+
+    /*---------- 2. IDLE：一帧数据收完 ----------*/
     if (USART1->SR & (0x01 << 4))
     {
-        /*
-        【清除中断标志位】
-        先读取 USART1->SR，再读取 USART1->DR
-        在 if 判断中 USART1->SR 已读取，仅需要再次读取 USART1->DR 即可
-        */
-        USART1->DR;
-
-        // 数据接收完成，flag 标志位为 1
-        usart1_value.flag = 1;
-
-        // 临时数据处理，数据回显到 PC 串口调试助手
-        Usart1_SendString("IDLE : ");
-        Usart1_SendBuffer(usart1_value.data, usart1_value.count);
-        Usart1_SendString("\r\n");
-        
-        GPIO_SetBits(GPIOD, GPIO_Pin_7);
-        Usart2_SendBuffer(usart1_value.data, usart1_value.count);
-        Usart2_SendString("\r\n");
-        GPIO_ResetBits(GPIOD, GPIO_Pin_7);
+        USART1->DR;                  /* 读 DR 清 IDLE 标志 */
+        usart1_value.flag = 1;       /* 只置标志，交给主循环处理 */
     }
-    
 }
 /* ----------------------------------------------------------------------------
  *  USART2：PA2=TX，PA3=RX

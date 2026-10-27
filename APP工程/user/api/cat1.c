@@ -73,62 +73,9 @@
  *=====================================================================*/
 
 #include "cat1.h"
-// /*=====================================================================
-//  * 函数：CAT1_GPIO_Init
-//  * 负责：A
-//  *
-//  * ★★★ 重要：本工程用的 4G 模块是【成品底板】，不是裸模块 ★★★
-//  *
-//  * 实物引脚（6 个）：
-//  *     EN   VIN   GND   TX   RX   DTR
-//  *
-//  * 底板自带 DC-DC 降压 + 开机电路，【上电即工作】，
-//  * 实测 EN 悬空模块就能正常启动并响应 AT 指令。
-//  *
-//  * 所以【不需要】MCU 控制 PWRKEY / RESET / NET_STA：
-//  *   原方案的 PF0(PWRKEY)   → 底板无此脚，不用
-//  *   原方案的 PF1(RESET)    → 底板无此脚，不用
-//  *   原方案的 PF2(NET_STA)  → 底板无此脚，不用
-//  *   原方案的 PF3(STATUS)   → 底板无此脚，不用
-//  *
-//  * ===== 本函数要做什么 =====
-//  *   什么都不用做！
-//  *   串口（USART3）的初始化在 usart.c 的 Usart3_Init 里，
-//  *   不在这个函数里。
-//  *
-//  *   保留这个空函数是为了：
-//  *     1. 框架结构完整，其他模块可以照常调用
-//  *     2. 以后如果换成裸模块（需要控制 PWRKEY），改这里就行
-//  *
-//  * ===== 如果以后换成裸模块 =====
-//  *   取消下面的注释，按原方案配 PF0~PF3：
-//  *
-//  *     GPIO_InitTypeDef gpio;
-//  *     RCC_APB2PeriphClockCmd(CAT1_CTRL_CLK, ENABLE);
-//  *
-//  *     // PF0 PWRKEY：开漏（模块内部 1.8V 上拉，推挽会倒灌）
-//  *     gpio.GPIO_Pin   = PWRKEY_PIN;
-//  *     gpio.GPIO_Mode  = GPIO_Mode_Out_OD;
-//  *     gpio.GPIO_Speed = GPIO_Speed_50MHz;
-//  *     GPIO_Init(CAT1_CTRL_PORT, &gpio);
-//  *
-//  *     // PF1 RESET：推挽
-//  *     gpio.GPIO_Pin   = RESET_PIN;
-//  *     gpio.GPIO_Mode  = GPIO_Mode_Out_PP;
-//  *     GPIO_Init(CAT1_CTRL_PORT, &gpio);
-//  *
-//  *     // PF2/PF3：上拉输入
-//  *     gpio.GPIO_Pin  = NET_STA_PIN | STATUS_PIN;
-//  *     gpio.GPIO_Mode = GPIO_Mode_IPU;
-//  *     GPIO_Init(CAT1_CTRL_PORT, &gpio);
-//  *
-//  *     PWRKEY_HIGH();      // 初始释放
-//  *     RESET_HIGH();
-//  *====================================================================*/
-// void CAT1_GPIO_Init(void)
-// {
-//     /* TODO【A】：实现 */
-// }
+
+
+
 
 /*=====================================================================
  * 函数：CAT1_PowerOn
@@ -182,6 +129,7 @@
 u8 CAT1_PowerOn(u16 timeout)
 {
     /* TODO【A】：实现 */
+
     return 1;
 }
 
@@ -206,69 +154,82 @@ u8 CAT1_PowerOn(u16 timeout)
  *====================================================================*/
 u8 CAT1_SendAT(char *cmd, char *expect, u16 timeout_ms)
 {
-    /* TODO【A】：实现 */
+    usart3_value.flag = 0;
+    usart3_value.count = 0;
+    Usart3_SendString(cmd);
+    Usart3_SendString("\r\n");
+    while (timeout_ms--)
+    {
+        delay_ms(1);
+        if (usart3_value.flag == 1)
+        {
+            if (usart3_value.count < USART3_BUFFER_SIZE)
+            {
+                usart3_value.data[usart3_value.count] = 0;
+            }
+
+            if (strstr((char *)usart3_value.data, expect) != NULL)
+            {
+
+                return 0;
+            }
+            usart3_value.flag = 0;
+        }
+    }
     return 1;
 }
-
-/*=====================================================================
- * 函数：CAT1_ActiveGPRS
- * 负责：A
- *
- * ★★★ 重要：不要用 SAPBR！这是 2026-10-27 实测结论 ★★★
- *
- * 原方案（36 号例程）用的是 SAPBR，实测这块 L511-2 全部返回 ERROR：
- *     AT+SAPBR=3,1,"Contype","GPRS"   → ERROR
- *     AT+SAPBR=3,1,"APN","CMNET"      → ERROR
- *     AT+SAPBR=1,1                    → ERROR
- *
- * 改用标准 PDP 方式后【全部 OK】，并成功拿到 IP 10.167.134.50。
- *
- * ===== 实测通过的完整序列 =====
- *   AT+CPIN?                    → +CPIN: READY
- *   AT+CREG?                    → +CREG: 0,1
- *   AT+CGATT?                   → +CGATT: 1
- *   AT+CGDCONT=1,"IP","CMNET"   → OK
- *   AT+CGACT=1,1                → OK
- *   AT+CGPADDR=1                → +CGPADDR: 1,"10.167.134.50"
- *
- * ===== 实现要点 =====
- *   1. if(CAT1_SendAT("AT+CPIN?", "READY", 3000))                   return 1;
- *      ← SIM 卡未就绪
- *
- *   2. 循环等网络注册（最多 60 秒，每秒查一次）：
- *        if(CAT1_SendAT("AT+CREG?", ",1", 2000) == 0) break;
- *        if(CAT1_SendAT("AT+CREG?", ",5", 2000) == 0) break;
- *        delay_ms(1000);
- *      超时 return 2;
- *      ← ",1" 本地注册，",5" 漫游注册，都算成功
- *
- *   3. if(CAT1_SendAT("AT+CGDCONT=1,\"IP\",\"CMNET\"", "OK", 3000)) return 3;
- *      ← 设置 PDP 上下文
- *      ★必须用 "IP" 不能用 "IPV4V6"★
- *        实测这块卡会同时拿到 IPv4 + IPv6 地址，
- *        但阿里云 OTA 走 IPv4，强制 IPv4 避免路由问题
- *
- *   4. if(CAT1_SendAT("AT+CGATT=1", "OK", 10000))                   return 4;
- *      ← 附着 GPRS（可能已自动附着，可以先查 AT+CGATT?）
- *
- *   5. if(CAT1_SendAT("AT+CGACT=1,1", "OK", 20000))                 return 5;
- *      ← 激活 PDP
- *
- *   6. if(CAT1_SendAT("AT+CGPADDR=1", "+CGPADDR:", 5000))           return 6;
- *      ← 确认拿到 IP（返回里应该能看到 10.x / 172.x / 192.x）
- *
- *   return 0;
- *
- * ★注意字符串里的引号要转义：\"★
- *
- * ★APN 说明★
- *   实测这张卡是 898600 号段（移动），APN 用 "CMNET" 成功。
- *   换联通卡改 "UNINET"，电信卡改 "CTNET"。
- *====================================================================*/
 u8 CAT1_ActiveGPRS(void)
 {
-    /* TODO【A】：实现 */
-    return 1;
+    u8 timemout = 60;
+    if (!CAT1_SendAT("AT+CPIN?", "READY", 3000))
+    {
+        Usart1_SendString("SIM卡未准备好\r\n");
+        return 1;
+    }
+    while (timemout--)
+    {
+        if (CAT1_SendAT("AT+CREG?", ",1", 2000) == 0)
+        {
+            break;
+        }
+        if (CAT1_SendAT("AT+CREG?", ",5", 2000) == 0)
+        {
+            break;
+        }
+
+        delay_ms(1000);
+        if (!timemout)
+        {
+            Usart1_SendString("网络注册超时\r\n");
+            return 1;
+            /* code */
+        }
+    }
+    if (!CAT1_SendAT("AT+CGDCONT=1,\"IP\",\"CMNET\"", "OK", 3000))
+    {
+        Usart1_SendString("设置APN失败\r\n");
+        return 1;
+        /* code */
+    }
+    if (CAT1_SendAT("AT+CGATT=1", "OK", 10000))
+    {
+        Usart1_SendString("附着失败\r\n");
+        return 1;
+        /* code */
+    }
+    if (!CAT1_SendAT("AT+CGACT=1,1", "OK", 20000))
+    {
+        Usart1_SendString("激活失败\r\n");
+        return 1;
+        /* code */
+    }
+    if (CAT1_SendAT("AT+CGPADDR=1", "+CGPADDR:", 5000))
+    {
+        Usart1_SendString("未拿到IP\r\n");
+        return 1;
+    }
+    Usart1_SendString("[GPRS] 成功\r\n");
+    return 0;
 }
 
 /*=====================================================================
@@ -314,6 +275,7 @@ u8 CAT1_ActiveGPRS(void)
 u8 CAT1_HttpInit(char *url)
 {
     /* TODO【A】：实现 */
+
     return 1;
 }
 

@@ -18,22 +18,15 @@
 #include "delay.h"
 #include "spi.h"
 #include "common.h"
-#define USART3_BRR (115200)
+/* USART3_BRR 已在 common.h 定义，这里不再重复 */
 /*==================== 串口定义 ====================*/
 #define CAT1_UART           USART3
 #define CAT1_printf         Usart3_SendString
 #define CAT1_RX_BUF         usart3_value.data
 #define CAT1_RxCounter      usart3_value.count
-
-/*==================== 控制脚定义（PF0~PF3）====================*/
-#define CAT1_CTRL_PORT      GPIOF
-#define CAT1_CTRL_CLK       RCC_APB2Periph_GPIOF
-
-#define PWRKEY_PIN          GPIO_Pin_0
-#define RESET_PIN           GPIO_Pin_1
-#define NET_STA_PIN         GPIO_Pin_2
-#define STATUS_PIN          GPIO_Pin_3
-
+#define CAT1_RX_PIN         GPIO_Pin_10
+#define CAT1_TX_PIN         GPIO_Pin_11
+#define CAT1_PORT           GPIOB
 /*==================== 控制宏 ====================*/
 #define PWRKEY_LOW()        GPIO_ResetBits(CAT1_CTRL_PORT, PWRKEY_PIN)
 #define PWRKEY_HIGH()       GPIO_SetBits(CAT1_CTRL_PORT, PWRKEY_PIN)
@@ -42,6 +35,7 @@
 
 #define NET_STA             GPIO_ReadInputDataBit(CAT1_CTRL_PORT, NET_STA_PIN)
 #define PWR_STA             GPIO_ReadInputDataBit(CAT1_CTRL_PORT, STATUS_PIN)
+
 
 /*==================== 函数声明 ====================*/
 
@@ -52,7 +46,7 @@
  * 返回：无
  * 负责：A
  *-------------------------------------------------------------------*/
-void CAT1_GPIO_Init(void);
+
 
 /*---------------------------------------------------------------------
  * 函数：CAT1_PowerOn
