@@ -1,35 +1,35 @@
-#include "modbus.h"
+ï»¿#include "modbus.h"
 // #define MASTER
 extern USART_Data usart2_value;
 void Modbus_Tim_Config(void)
 {
-    ////Ê×ÏÈ¶ÔTim7¶¨Ê±Æ÷½øĞĞÊ±ÖÓÊ¹ÄÜ
+    ////é¦–å…ˆå¯¹Tim7å®šæ—¶å™¨è¿›è¡Œæ—¶é’Ÿä½¿èƒ½
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM7, ENABLE);
 
-    /// ÓÉÓÚ²¿·Ö²Ù×÷ÔÙ¶¨Ê±Æ÷¿ªÆôÊ±ÎŞ·¨Ö´ĞĞ,ÔòÊÇÄÜºóÏÈ¹Ø±Õ¶¨Ê±Æ÷
+    /// ç”±äºéƒ¨åˆ†æ“ä½œå†å®šæ—¶å™¨å¼€å¯æ—¶æ— æ³•æ‰§è¡Œ,åˆ™æ˜¯èƒ½åå…ˆå…³é—­å®šæ—¶å™¨
     TIM_Cmd(TIM7, DISABLE);
 
-    /* ´ËÎª½á¹¹ÌåÄÚ²¿³ÉÔ±±äÁ¿
-        /// PSC CNT¼ÆÊıÆ÷Ô¤·ÖÆµÖµ
+    /* æ­¤ä¸ºç»“æ„ä½“å†…éƒ¨æˆå‘˜å˜é‡
+        /// PSC CNTè®¡æ•°å™¨é¢„åˆ†é¢‘å€¼
         uint16_t TIM_Prescaler;
-        /// CNT ¼ÆÊıÆ÷¼ÆÊıÄ£Ê½
+        /// CNT è®¡æ•°å™¨è®¡æ•°æ¨¡å¼
         uint16_t TIM_CounterMode;
-        /// ARR ×Ô¶¯ÖØ×°ÔØ¼Ä´æÆ÷Öµ
+        /// ARR è‡ªåŠ¨é‡è£…è½½å¯„å­˜å™¨å€¼
         uint16_t TIM_Period;
-        /// µ±Ç°ÏµÍ³Ê±ÖÓ¸øµ±Ç°¶¨Ê±Æ÷µÄ·ÖÆµ±¶ËÙ
+        /// å½“å‰ç³»ç»Ÿæ—¶é’Ÿç»™å½“å‰å®šæ—¶å™¨çš„åˆ†é¢‘å€é€Ÿ
         uint16_t TIM_ClockDivision;
-        /// ¶¨Ê±Æ÷ÊÇ·ñÖØ¸´
+        /// å®šæ—¶å™¨æ˜¯å¦é‡å¤
         uint8_t TIM_RepetitionCounter;
     */
     TIM_TimeBaseInitTypeDef TIM_TimeBaseInitStructure = {0};
-    TIM_TimeBaseInitStructure.TIM_Prescaler = 72 - 1; /// ÓÉÓÚĞ¾Æ¬Îª72MHz ÔòPSCÎª72Ê± ÕûÌåÆµÂÊÎª  1MHz
+    TIM_TimeBaseInitStructure.TIM_Prescaler = 72 - 1; /// ç”±äºèŠ¯ç‰‡ä¸º72MHz åˆ™PSCä¸º72æ—¶ æ•´ä½“é¢‘ç‡ä¸º  1MHz
     TIM_TimeBaseInitStructure.TIM_Period = DATA_FRAME_TIME_INTERVAL - 1;
-    TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up; /// ÏòÉÏ¼ÆÊıÄ£Ê½
-    TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;     /// Ê±ÖÓ·ÖÆµÎª1
-    TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;            /// ²»ÖØ¸´¼ÆÊı
+    TIM_TimeBaseInitStructure.TIM_CounterMode = TIM_CounterMode_Up; /// å‘ä¸Šè®¡æ•°æ¨¡å¼
+    TIM_TimeBaseInitStructure.TIM_ClockDivision = TIM_CKD_DIV1;     /// æ—¶é’Ÿåˆ†é¢‘ä¸º1
+    TIM_TimeBaseInitStructure.TIM_RepetitionCounter = 0;            /// ä¸é‡å¤è®¡æ•°
     TIM_TimeBaseInit(TIM7, &TIM_TimeBaseInitStructure);
-    TIM_SelectOnePulseMode(TIM7, TIM_OPMode_Single); /// µ¥´Î¼ÆÊıÄ£Ê½
-    /// ÅäÖÃ¶¨Ê±Æ÷µ±Ç°ÖĞ¶Ï
+    TIM_SelectOnePulseMode(TIM7, TIM_OPMode_Single); /// å•æ¬¡è®¡æ•°æ¨¡å¼
+    /// é…ç½®å®šæ—¶å™¨å½“å‰ä¸­æ–­
 
     TIM_ITConfig(TIM7, TIM_IT_Update, ENABLE);
     NVIC_InitTypeDef NVIC_InitStructure = {0};
@@ -38,7 +38,7 @@ void Modbus_Tim_Config(void)
     NVIC_InitStructure.NVIC_IRQChannelPreemptionPriority = 0;
     NVIC_InitStructure.NVIC_IRQChannelSubPriority = 1;
     NVIC_Init(&NVIC_InitStructure);
-    /// ¹Ø±Õµ±Ç°¶¨Ê±
+    /// å…³é—­å½“å‰å®šæ—¶
     TIM_SetCounter(TIM7, 0);
 }
 volatile u8 usart2_frame_flag = 0;
@@ -46,47 +46,47 @@ void TIM7_IRQHandler(void)
 {
     if (TIM_GetITStatus(TIM7, TIM_IT_Update))
     {
-        /// Çå³ı±êÖ¾Î»
+        /// æ¸…é™¤æ ‡å¿—ä½
         TIM7->SR = 0;
-        /// ¹Ø±Õ¶¨Ê±Æ÷
+        /// å…³é—­å®šæ—¶å™¨
         TIM_Cmd(TIM7, DISABLE);
         TIM_SetCounter(TIM7, 0);
         usart2_frame_flag = 1;
     }
 }
 
-/// @brief ·¢ËÍ03¹¦ÄÜÂë¶ÔÉè±¸½øĞĞ¶à¸ö¼Ä´æÆ÷Êı¾İÌáÈ¡²Ù×÷
-/// @param device_addr  ´Ó»úÉè±¸µØÖ·
-/// @param reg_addr ´Ó»ú¶ÔÓ¦¼Ä´æÆ÷ÆğÊ¼µØÖ·
-/// @param reg_count ¼Ä´æÆ÷ÊıÁ¿
+/// @brief å‘é€03åŠŸèƒ½ç å¯¹è®¾å¤‡è¿›è¡Œå¤šä¸ªå¯„å­˜å™¨æ•°æ®æå–æ“ä½œ
+/// @param device_addr  ä»æœºè®¾å¤‡åœ°å€
+/// @param reg_addr ä»æœºå¯¹åº”å¯„å­˜å™¨èµ·å§‹åœ°å€
+/// @param reg_count å¯„å­˜å™¨æ•°é‡
 
 void Modbus_Send_03_Cmd(u8 device_addr, u16 reg_addr, u16 reg_count)
 {
     u8 modbus_03_cmd[8] = {0};
     u8 pos = 0;
     /*
-    Modbus 03 ¹¦ÄÜÂëÎÊÑ¯Ö¡¶ÔÓ¦µÄ×Ö½ÚÊı¹Ì¶¨Î» 8 ¸ö×Ö½Ú
-        µØÖ·Óò 1 ×Ö½Ú
-        ¹¦ÄÜÂë 1 ×Ö½Ú
-        ¼Ä´æÆ÷µØÖ· 2 ×Ö½Ú
-        ¼Ä´æÆ÷ÊıÁ¿ 2 ×Ö½Ú
-        CRC Ğ£Ñé 2 ×Ö½Ú
+    Modbus 03 åŠŸèƒ½ç é—®è¯¢å¸§å¯¹åº”çš„å­—èŠ‚æ•°å›ºå®šä½ 8 ä¸ªå­—èŠ‚
+        åœ°å€åŸŸ 1 å­—èŠ‚
+        åŠŸèƒ½ç  1 å­—èŠ‚
+        å¯„å­˜å™¨åœ°å€ 2 å­—èŠ‚
+        å¯„å­˜å™¨æ•°é‡ 2 å­—èŠ‚
+        CRC æ ¡éªŒ 2 å­—èŠ‚
     */
-    // 1. Éè±¸µØÖ·===>µØÖ·Óò 1 ×Ö½Ú
+    // 1. è®¾å¤‡åœ°å€===>åœ°å€åŸŸ 1 å­—èŠ‚
     modbus_03_cmd[pos++] = device_addr;
-    // 2. 03¹¦ÄÜÂë===>¹¦ÄÜÂë 1 ×Ö½Ú
+    // 2. 03åŠŸèƒ½ç ===>åŠŸèƒ½ç  1 å­—èŠ‚
     modbus_03_cmd[pos++] = 0x03;
-    // 3 ¼Ä´æÆ÷µØÖ·===>¼Ä´æÆ÷µØÖ· 2 ×Ö½Ú
-    modbus_03_cmd[pos++] = reg_addr >> 8;     // ¸ß×Ö½Ú
-    modbus_03_cmd[pos++] = reg_addr & 0x00FF; // µÍ×Ö½Ú
-    // 4.¼Ä´æÆ÷ÊıÁ¿===>¼Ä´æÆ÷ÊıÁ¿ 2 ×Ö½Ú
-    modbus_03_cmd[pos++] = reg_count >> 8;     // ¸ß×Ö½Ú
-    modbus_03_cmd[pos++] = reg_count & 0x00FF; // µÍ×Ö½Ú
-    // 5. ¼Ä´æÆ÷CRC Êı¾İ
+    // 3 å¯„å­˜å™¨åœ°å€===>å¯„å­˜å™¨åœ°å€ 2 å­—èŠ‚
+    modbus_03_cmd[pos++] = reg_addr >> 8;     // é«˜å­—èŠ‚
+    modbus_03_cmd[pos++] = reg_addr & 0x00FF; // ä½å­—èŠ‚
+    // 4.å¯„å­˜å™¨æ•°é‡===>å¯„å­˜å™¨æ•°é‡ 2 å­—èŠ‚
+    modbus_03_cmd[pos++] = reg_count >> 8;     // é«˜å­—èŠ‚
+    modbus_03_cmd[pos++] = reg_count & 0x00FF; // ä½å­—èŠ‚
+    // 5. å¯„å­˜å™¨CRC æ•°æ®
     uint16_t crc = Modbus_CRC16(modbus_03_cmd, pos);
-    modbus_03_cmd[pos++] = crc & 0x00FF; // µÍ×Ö½Ú
-    modbus_03_cmd[pos++] = crc >> 8;     // ¸ß×Ö½Ú
-    // 6. ÀûÓÃ RS485 Ä£¿é½«Êı¾İ·¢ËÍ¸ø´Ó»ú
+    modbus_03_cmd[pos++] = crc & 0x00FF; // ä½å­—èŠ‚
+    modbus_03_cmd[pos++] = crc >> 8;     // é«˜å­—èŠ‚
+    // 6. åˆ©ç”¨ RS485 æ¨¡å—å°†æ•°æ®å‘é€ç»™ä»æœº
     Usart1_SendBuffer(modbus_03_cmd, pos);
     RS485_SendBuffer(modbus_03_cmd, pos);
 }
@@ -96,31 +96,31 @@ void Modbus_SendData_03(u8 device_addr, u16 reg_count, u16 *data)
     u8 modbus_03_cmd[16] = {0};
     u8 pos = 0;
     /*
-    Modbus 03 ¹¦ÄÜÂëÎÊÑ¯Ö¡¶ÔÓ¦µÄ×Ö½ÚÊı¹Ì¶¨Î» 8 ¸ö×Ö½Ú
-        µØÖ·Óò 1 ×Ö½Ú
-        ¹¦ÄÜÂë 1 ×Ö½Ú
-        ¼Ä´æÆ÷µØÖ· 2 ×Ö½Ú
-        ¼Ä´æÆ÷ÊıÁ¿ 2 ×Ö½Ú
-        CRC Ğ£Ñé 2 ×Ö½Ú
+    Modbus 03 åŠŸèƒ½ç é—®è¯¢å¸§å¯¹åº”çš„å­—èŠ‚æ•°å›ºå®šä½ 8 ä¸ªå­—èŠ‚
+        åœ°å€åŸŸ 1 å­—èŠ‚
+        åŠŸèƒ½ç  1 å­—èŠ‚
+        å¯„å­˜å™¨åœ°å€ 2 å­—èŠ‚
+        å¯„å­˜å™¨æ•°é‡ 2 å­—èŠ‚
+        CRC æ ¡éªŒ 2 å­—èŠ‚
     */
-    // 1. Éè±¸µØÖ·===>µØÖ·Óò 1 ×Ö½Ú
+    // 1. è®¾å¤‡åœ°å€===>åœ°å€åŸŸ 1 å­—èŠ‚
     modbus_03_cmd[pos++] = device_addr;
-    // 2. 03¹¦ÄÜÂë===>¹¦ÄÜÂë 1 ×Ö½Ú
+    // 2. 03åŠŸèƒ½ç ===>åŠŸèƒ½ç  1 å­—èŠ‚
     modbus_03_cmd[pos++] = 0x03;
-    // 3 Êı¾İ×Ö½ÚÊı
+    // 3 æ•°æ®å­—èŠ‚æ•°
     modbus_03_cmd[pos++] = data_len;
-    // 4 ´æÈëÊı¾İ
+    // 4 å­˜å…¥æ•°æ®
     for (u8 i = 0; i < reg_count; i++)
     {
 
-        modbus_03_cmd[pos++] = data[i] >> 8;     // ¸ß×Ö½Ú
-        modbus_03_cmd[pos++] = data[i] & 0x00FF; // µÍ×Ö½Ú
+        modbus_03_cmd[pos++] = data[i] >> 8;     // é«˜å­—èŠ‚
+        modbus_03_cmd[pos++] = data[i] & 0x00FF; // ä½å­—èŠ‚
     }
-    // 5. ¼Ä´æÆ÷CRC Êı¾İ
+    // 5. å¯„å­˜å™¨CRC æ•°æ®
     uint16_t crc = Modbus_CRC16(modbus_03_cmd, pos);
-    modbus_03_cmd[pos++] = crc & 0x00FF; // µÍ×Ö½Ú
-    modbus_03_cmd[pos++] = crc >> 8;     // ¸ß×Ö½Ú
-    // 6. ÀûÓÃ RS485 Ä£¿é½«Êı¾İ·¢ËÍ¸øÖ÷»ú
+    modbus_03_cmd[pos++] = crc & 0x00FF; // ä½å­—èŠ‚
+    modbus_03_cmd[pos++] = crc >> 8;     // é«˜å­—èŠ‚
+    // 6. åˆ©ç”¨ RS485 æ¨¡å—å°†æ•°æ®å‘é€ç»™ä¸»æœº
     RS485_SendBuffer(modbus_03_cmd, pos);
     Usart1_SendBuffer(modbus_03_cmd, pos);
 }
@@ -128,7 +128,7 @@ void Modbus_SendData_03(u8 device_addr, u16 reg_count, u16 *data)
 01 03 0A 01 C4 01 05 02 32 00 23 00 3C 4A 87
 */
 /*
-Êı¾İ½âÎöº¯ÊıÊÇÕë¶ÔÓÚ²»Í¬µÄ¹¦ÄÜÂëĞÅÏ¢´¦Àí
+æ•°æ®è§£æå‡½æ•°æ˜¯é’ˆå¯¹äºä¸åŒçš„åŠŸèƒ½ç ä¿¡æ¯å¤„ç†
 */
 
 u8 Modbus_Analysis(u8 *buffer, u16 count)
@@ -158,7 +158,7 @@ u8 Modbus_Analysis(u8 *buffer, u16 count)
     }
     if (count == 8)
     {
-        Usart1_SendString("ÒÑÊÕµ½Ö÷»úÎÊÑ¶Ö¡\r\n");
+        Usart1_SendString("å·²æ”¶åˆ°ä¸»æœºé—®è®¯å¸§\r\n");
         return 2;
     }
     else if (buffer[2] + 5 != count)
@@ -185,19 +185,19 @@ u8 Modbus_Analysis(u8 *buffer, u16 count)
 
 uint16_t Modbus_CRC16(const uint8_t *data, size_t length)
 {
-    uint16_t crc = 0xFFFF; // ³õÊ¼Öµ
+    uint16_t crc = 0xFFFF; // åˆå§‹å€¼
     size_t i, j;
 
     for (i = 0; i < length; i++)
     {
-        crc ^= data[i]; // Óëµ±Ç°×Ö½ÚÒì»ò
+        crc ^= data[i]; // ä¸å½“å‰å­—èŠ‚å¼‚æˆ–
 
         for (j = 0; j < 8; j++)
         {
             if (crc & 0x0001)
-            { // ¼ì²é×îµÍÎ»
+            { // æ£€æŸ¥æœ€ä½ä½
                 crc >>= 1;
-                crc ^= 0xA001; // ¶àÏîÊ½0x8005µÄÄæĞò
+                crc ^= 0xA001; // å¤šé¡¹å¼0x8005çš„é€†åº
             }
             else
             {
@@ -205,5 +205,5 @@ uint16_t Modbus_CRC16(const uint8_t *data, size_t length)
             }
         }
     }
-    return crc; // ·µ»ØCRCÖµ£¨ÎŞĞèÈ¡·´£©
+    return crc; // è¿”å›CRCå€¼ï¼ˆæ— éœ€å–åï¼‰
 }

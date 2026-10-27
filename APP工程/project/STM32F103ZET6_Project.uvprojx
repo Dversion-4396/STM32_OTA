@@ -661,24 +661,9 @@
               <FilePath>..\user\api\systick.c</FilePath>
             </File>
             <File>
-              <FileName>oled.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\oled.c</FilePath>
-            </File>
-            <File>
               <FileName>i2c.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\user\api\i2c.c</FilePath>
-            </File>
-            <File>
-              <FileName>oled_font.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\oled_font.c</FilePath>
-            </File>
-            <File>
-              <FileName>gif_frames.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\gif_frames.c</FilePath>
             </File>
           </Files>
         </Group>

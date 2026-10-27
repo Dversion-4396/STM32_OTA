@@ -1,4 +1,4 @@
-#ifndef _TIM6_H
+﻿#ifndef _TIM6_H
 #define _TIM6_H
 
 #include "common.h"

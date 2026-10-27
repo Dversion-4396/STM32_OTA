@@ -1,0 +1,46 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "STM32F103 - 调试（需安装 Cortex-Debug + J-Link/ST-Link）",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "jlink",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/APP工程/project/Objects/STM32F103ZET6_Project.axf",
+      "device": "STM32F103ZE",
+      "interface": "swd",
+      "runToEntryPoint": "main"
+    },
+    {
+      "name": "STM32F103 - 调试（ST-Link）",
+      "type": "cortex-debug",
+      "request": "launch",
+      "servertype": "stlink",
+      "cwd": "${workspaceFolder}",
+      "executable": "${workspaceFolder}/APP工程/project/Objects/STM32F103ZET6_Project.axf",
+      "device": "STM32F103ZE",
+      "interface": "swd",
+      "runToEntryPoint": "main"
+    },
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "cppdbg",
+      "request": "launch",
+      "args": [],
+      "stopAtEntry": false,
+      "externalConsole": true,
+      "cwd": "e:/桌面/ota/STM32_OTA/APP工程/user",
+      "program": "e:/桌面/ota/STM32_OTA/APP工程/user/build/Debug/outDebug",
+      "MIMode": "gdb",
+      "miDebuggerPath": "gdb",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}

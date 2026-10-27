@@ -1,4 +1,4 @@
-#include "tim6.h"
+ï»¿#include "tim6.h"
 #include "usart.h"
 #include "delay.h"
 #define MQTT_PUBLISH_TOPIC "attributes"
@@ -11,11 +11,11 @@ void Tim6_Init(u16 psc, u16 arr)
 
     TIM6->ARR = arr - 1;
 
-    TIM6->CR1 &= ~(0x01 << 7); // ARR »º³å¹Ø±Õ
+    TIM6->CR1 &= ~(0x01 << 7); // ARR ç¼“å†²å…³é—­
 #if 1
-    TIM6->CR1 &= ~(0x01 << 3); // OPM Îª 0£¬ÖÜÆÚÐÔ¶¨Ê±Æ÷
+    TIM6->CR1 &= ~(0x01 << 3); // OPM ä¸º 0ï¼Œå‘¨æœŸæ€§å®šæ—¶å™¨
 #else
-    TIM6->CR1 |= (0x01 << 3); // OPM Îª 1£¬Ò»´ÎÐÔ¶¨Ê±Æ÷
+    TIM6->CR1 |= (0x01 << 3); // OPM ä¸º 1ï¼Œä¸€æ¬¡æ€§å®šæ—¶å™¨
 #endif
     TIM6->DIER |= (0x01);
     NVIC_SetPriority(TIM6_IRQn, 2);
@@ -24,6 +24,6 @@ void Tim6_Init(u16 psc, u16 arr)
 }
 void TIM6_IRQHandler(void)
 {
-    // Çå³ýÖÐ¶Ï±êÖ¾Î»
+    // æ¸…é™¤ä¸­æ–­æ ‡å¿—ä½
     TIM6->SR = 0;
 }

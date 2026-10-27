@@ -1,4 +1,4 @@
-#include "dht11.h"
+ï»¿#include "dht11.h"
 static GPIO_InitTypeDef GPIO_InitStructure = {0};
 void dht11_init(DHG11_NUM num)
 {
@@ -150,12 +150,12 @@ static void dht11_gpio_high(DHG11_NUM num)
 
 void dht11_start_signal(DHG11_NUM num)
 {
-    dht11_gpio_output_mode(num); /* ÇĞÍÆÍìÊä³ö£¬º¯ÊıÄÚ²¿ÒÑÖÃ¸ß */
-    dht11_gpio_low(num);         /* À­µÍ£¬18ms ÒÔÉÏ */
+    dht11_gpio_output_mode(num); /* åˆ‡æ¨æŒ½è¾“å‡ºï¼Œå‡½æ•°å†…éƒ¨å·²ç½®é«˜ */
+    dht11_gpio_low(num);         /* æ‹‰ä½ï¼Œ18ms ä»¥ä¸Š */
     delay_ms(35);
-    dht11_gpio_high(num); /* ÊÍ·ÅÎª¸ß£¬20~40us */
+    dht11_gpio_high(num); /* é‡Šæ”¾ä¸ºé«˜ï¼Œ20~40us */
     delay_us(35);
-    dht11_gpio_input_mode(num); /* ÇĞÊäÈë£¬µÈ DHT11 ÏìÓ¦ */
+    dht11_gpio_input_mode(num); /* åˆ‡è¾“å…¥ï¼Œç­‰ DHT11 å“åº” */
 }
 DHT11_STATUS dht11_response(DHG11_NUM num)
 {

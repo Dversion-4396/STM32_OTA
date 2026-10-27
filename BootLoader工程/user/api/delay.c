@@ -1,4 +1,4 @@
-#include "delay.h"
+ï»¿#include "delay.h"
 
 void delay_us(u32 us) 
 {
@@ -15,9 +15,9 @@ void delay_us(u32 us)
 	}
 }
 /**
- * @brief ÑÓÊ±¿ØÖÆº¯Êı£¬¿ØÖÆÊ±¼äµ¥Î»Îª ms ºÁÃë
+ * @brief å»¶æ—¶æ§åˆ¶å‡½æ•°ï¼Œæ§åˆ¶æ—¶é—´å•ä½ä¸º ms æ¯«ç§’
  *
- * @param ms ÓÃ»§Ìá¹©µÄ¿ØÖÆÑÓÊ±µÄºÁÃëÊı
+ * @param ms ç”¨æˆ·æä¾›çš„æ§åˆ¶å»¶æ—¶çš„æ¯«ç§’æ•°
  */
 void delay_ms(u32 ms)
 {

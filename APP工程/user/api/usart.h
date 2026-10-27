@@ -1,4 +1,4 @@
-#ifndef _USART_H
+﻿#ifndef _USART_H
 #define _USART_H
 #include "common.h"
 #include "modbus.h"

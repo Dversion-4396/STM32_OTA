@@ -1,24 +1,24 @@
-#include "led.h"
+ï»¿#include "led.h"
 #include "delay.h"
 void Led_Init(void)
 {
     /*
-     *¶ÔÆäÏàÓ¦½Ó¿Ú½øÐÐÊ±ÖÓ¸³ÄÜ
+     *å¯¹å…¶ç›¸åº”æŽ¥å£è¿›è¡Œæ—¶é’Ÿèµ‹èƒ½
      */
     RCC->APB2ENR |= RCC_APB2_GPIOB_CLOCK_ENABLE | RCC_APB2_GPIOE_CLOCK_ENABLE;
-    /// ³õÊ¼»¯²¢ÉèÖÃÍ¨ÓÃÍÆÍìÊä³öÄ£Ê½
+    /// åˆå§‹åŒ–å¹¶è®¾ç½®é€šç”¨æŽ¨æŒ½è¾“å‡ºæ¨¡å¼
     GPIOB->CRL &= ~(0x0f << 20);
     GPIOB->CRL |= (General_Push_And_Pull_Speed_2MHz << 20);
     GPIOE->CRL &= ~(0x0f << 20);
     GPIOE->CRL |= (General_Push_And_Pull_Speed_2MHz << 20);
-    /// ÉèÖÃÄ¬ÈÏ¸ßµçÆ½ ¡ª¡ª ¡ï ±¾°å LED ÊÇµÍµçÆ½µãÁÁ£¬ËùÒÔÒ»¿ªÊ¼ÊÇ"Ãð"
+    /// è®¾ç½®é»˜è®¤é«˜ç”µå¹³ â€”â€” â˜… æœ¬æ¿ LED æ˜¯ä½Žç”µå¹³ç‚¹äº®ï¼Œæ‰€ä»¥ä¸€å¼€å§‹æ˜¯"ç­"
     Led_High(GPIOB);
     Led_High(GPIOE);
     
 }
 void Led_Breath(u32 Brightness)
 {
-    /* µÍµçÆ½µãÁÁ£ºBrightness Ô½´ó£¬µÆ"ÁÁ"µÄÕ¼¿Õ±ÈÔ½Ð¡£¬ËùÒÔÕâÀïÔ½°µ */
+    /* ä½Žç”µå¹³ç‚¹äº®ï¼šBrightness è¶Šå¤§ï¼Œç¯"äº®"çš„å ç©ºæ¯”è¶Šå°ï¼Œæ‰€ä»¥è¿™é‡Œè¶Šæš— */
     for (u32 i = 0; i < 256; i++)
     {
         i < Brightness ? Led_Low(GPIOB):Led_High(GPIOB);

@@ -1,4 +1,4 @@
-#ifndef _EEPROM_H
+ï»¿#ifndef _EEPROM_H
 #define _EEPROM_H
 
 #include "common.h"
@@ -6,21 +6,21 @@
 
 
 /**
- * @brief Ğ´ÈëÒ»¸ö×Ö½ÚÊı¾İµ½ EEPROM AT24C02 ´æ´¢Ğ¾Æ¬ÖĞ£¬
+ * @brief å†™å…¥ä¸€ä¸ªå­—èŠ‚æ•°æ®åˆ° EEPROM AT24C02 å­˜å‚¨èŠ¯ç‰‡ä¸­ï¼Œ
  *
- * @param eeprom_addr EEPROM AT24C02 ´æ´¢Ğ¾Æ¬ I2C Éè±¸µØÖ·
- * @param reg_addr    Ä¿±êĞ´Èëµ½´æ´¢Ğ¾Æ¬¼Ä´æÆ÷µØÖ·
- * @param data        Ä¿±êĞ´ÈëµÄ 1 ×Ö½ÚÊı¾İÄÚÈİ
- * @return ¶ÔÓ¦µ±Ç°´Ó»úÓ¦´ğĞÅÏ¢¡£
+ * @param eeprom_addr EEPROM AT24C02 å­˜å‚¨èŠ¯ç‰‡ I2C è®¾å¤‡åœ°å€
+ * @param reg_addr    ç›®æ ‡å†™å…¥åˆ°å­˜å‚¨èŠ¯ç‰‡å¯„å­˜å™¨åœ°å€
+ * @param data        ç›®æ ‡å†™å…¥çš„ 1 å­—èŠ‚æ•°æ®å†…å®¹
+ * @return å¯¹åº”å½“å‰ä»æœºåº”ç­”ä¿¡æ¯ã€‚
  */
 u8 EEPROM_WriteByte(u8 eeprom_addr, u8 reg_addr, u8 data);
 
 /**
- * @brief ´Ó EEPROM AT24C02 ´æ´¢Ğ¾Æ¬ÖĞ¶ÁÈ¡Ò»¸ö×Ö½ÚÊı¾İ
+ * @brief ä» EEPROM AT24C02 å­˜å‚¨èŠ¯ç‰‡ä¸­è¯»å–ä¸€ä¸ªå­—èŠ‚æ•°æ®
  *
- * @param eeprom_addr EEPROM AT24C02 ´æ´¢Ğ¾Æ¬ I2C Éè±¸µØÖ·
- * @param reg_addr    Ä¿±ê¶ÁÈ¡Êı¾İµÄ¼Ä´æÆ÷µØÖ·
- * @return ¶ÔÓ¦¶ÁÈ¡µ½µÄÊı¾İÄÚÈİ
+ * @param eeprom_addr EEPROM AT24C02 å­˜å‚¨èŠ¯ç‰‡ I2C è®¾å¤‡åœ°å€
+ * @param reg_addr    ç›®æ ‡è¯»å–æ•°æ®çš„å¯„å­˜å™¨åœ°å€
+ * @return å¯¹åº”è¯»å–åˆ°çš„æ•°æ®å†…å®¹
  */
 u8 EEPROM_ReadByte(u8 eeprom_addr, u8 reg_addr);
 

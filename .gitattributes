@@ -1,0 +1,39 @@
+# ============================================================
+# Git 属性配置 —— 保证跨机器一致
+# ============================================================
+
+# ---------- 换行符统一 ----------
+# 源码用 CRLF（Keil 在 Windows 下的默认行为）
+*.c        text eol=crlf
+*.h        text eol=crlf
+*.s        text eol=crlf
+*.uvprojx  text eol=crlf
+*.uvoptx   text eol=crlf
+*.md       text eol=crlf
+*.json     text eol=crlf
+*.gitignore    text eol=crlf
+*.gitattributes text eol=crlf
+
+# ---------- 二进制文件（不做换行转换）----------
+*.bin      binary
+*.hex      binary
+*.axf      binary
+*.elf      binary
+*.pdf      binary
+*.png      binary
+*.jpg      binary
+*.jpeg     binary
+*.gif      binary
+*.zip      binary
+*.7z       binary
+*.rar      binary
+
+# ---------- Keil 工程文件的合并策略 ----------
+# 多人同时改工程文件时，避免整个文件冲突
+*.uvprojx  merge=union
+*.uvoptx   merge=union
+
+# ---------- 语言识别（GitHub 上正确显示）----------
+*.h        linguist-language=C
+*.s        linguist-language=Assembly
+*.uvprojx  linguist-language=XML

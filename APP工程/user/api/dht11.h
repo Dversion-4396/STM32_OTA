@@ -1,4 +1,4 @@
-#ifndef _DHT11_H
+ï»¿#ifndef _DHT11_H
 #define _DHT11_H
 #include "common.h"
 #include "delay.h"
@@ -37,18 +37,18 @@ typedef enum
     DHT11_3,
     DHT11_4,
 } DHG11_NUM;
-/// @brief ³õÊ¼»¯º¯Êı
-/// @param num Ñ¡Ôñ¶ÔÓ¦µÄdht11±àºÅ
+/// @brief åˆå§‹åŒ–å‡½æ•°
+/// @param num é€‰æ‹©å¯¹åº”çš„dht11ç¼–å·
 void dht11_init(DHG11_NUM num);
-/// @brief ¿ØÖÆdht11ÎªÊäÈëÄ£Ê½Í¬Ê±ÉèÖÃÎªÎŞÀ­Ä£Ê½
+/// @brief æ§åˆ¶dht11ä¸ºè¾“å…¥æ¨¡å¼åŒæ—¶è®¾ç½®ä¸ºæ— æ‹‰æ¨¡å¼
 void dht11_gpio_input_mode(DHG11_NUM num);
-/// @brief ¿ØÖÆdht11ÎªÊä³öÄ£Ê½Í¬Ê±ÉèÖÃÎªÉÏÀ­Ä£Ê½
+/// @brief æ§åˆ¶dht11ä¸ºè¾“å‡ºæ¨¡å¼åŒæ—¶è®¾ç½®ä¸ºä¸Šæ‹‰æ¨¡å¼
 /// @param
 void dht11_gpio_output_mode(DHG11_NUM num);
-/// @brief mcuÏòdht111·¢ËÍÆğÊ¼ĞÅºÅ
+/// @brief mcuå‘dht111å‘é€èµ·å§‹ä¿¡å·
 void dht11_start_signal(DHG11_NUM num);
-/// @brief ¶ÁÈ¡ÏàÓ¦ĞÅºÅ
-/// @return ÏàÓ¦³É¹¦·µ»ØDHT11_STATUS_SUCCES,Ê§°Ü·µ»ØDHT11_STATUS_FAILED,
+/// @brief è¯»å–ç›¸åº”ä¿¡å·
+/// @return ç›¸åº”æˆåŠŸè¿”å›DHT11_STATUS_SUCCES,å¤±è´¥è¿”å›DHT11_STATUS_FAILED,
 DHT11_STATUS dht11_response(DHG11_NUM num);
 
 GPIO_STATUS dht11_gpio_input_value(DHG11_NUM num);

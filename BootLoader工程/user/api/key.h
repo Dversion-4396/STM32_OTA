@@ -1,4 +1,4 @@
-#ifndef _KEY_H
+ï»¿#ifndef _KEY_H
 #define _KEY_H
 #include "common.h"
 typedef enum
@@ -10,14 +10,14 @@ typedef enum
     Key_Up_Press,
 }Key_Value;
 /*
-             @brief ³õÊ¼»¯º¯Êı
-*           key_up==PA0 ¶ÔÓ¦ÏÂÀ­ÊäÈëÄ£Ê½
-*           key2  ==PE2 ¶ÔÓ¦ÉÏÀ­ÊäÈëÄ£Ê½
-*           key1  ==PE3 ¶ÔÓ¦ÉÏÀ­ÊäÈëÄ£Ê½
-*           key0  ==PE4 ¶ÔÓ¦ÉÏÀ­ÊäÈëÄ£Ê½
+             @brief åˆå§‹åŒ–å‡½æ•°
+*           key_up==PA0 å¯¹åº”ä¸‹æ‹‰è¾“å…¥æ¨¡å¼
+*           key2  ==PE2 å¯¹åº”ä¸Šæ‹‰è¾“å…¥æ¨¡å¼
+*           key1  ==PE3 å¯¹åº”ä¸Šæ‹‰è¾“å…¥æ¨¡å¼
+*           key0  ==PE4 å¯¹åº”ä¸Šæ‹‰è¾“å…¥æ¨¡å¼
 */ 
 void Key_Init(void);
-/// @brief ÓÃÓÚ·´À¡Ö¸¶¨°´Å¥ÊÇ·ñ±»°´ÏÂ 
-/// @return ·µ»ØÀàĞÍ¶ÔÓ¦key_valueµÄÀàĞÍ
+/// @brief ç”¨äºåé¦ˆæŒ‡å®šæŒ‰é’®æ˜¯å¦è¢«æŒ‰ä¸‹ 
+/// @return è¿”å›ç±»å‹å¯¹åº”key_valueçš„ç±»å‹
 Key_Value Key_Press(void);
 #endif
