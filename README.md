@@ -5,6 +5,72 @@
 
 ---
 
+## 克隆后怎么用（组员必看）
+
+### 1. 克隆仓库
+
+```bash
+git clone https://github.com/Dversion-4396/STM32_OTA.git
+cd STM32_OTA
+```
+
+### 2. 用 VS Code 打开
+
+```
+code .
+```
+
+**打开后会自动：**
+- 推荐安装 C/C++ 扩展（右下角弹窗，点"安装"）
+- 加载正确的头文件路径（不再有"未定义标识符"红波浪线）
+- 文件编码自动识别为 UTF-8（中文注释正常显示）
+
+> 如果还是报红波浪线：按 `Ctrl+Shift+P` → 输入 `C/C++: Reset IntelliSense Database` → 回车
+
+### 3. 切换分支
+
+```bash
+git checkout dev-A    # A 负责 4G
+git checkout dev-B    # B 负责 BootLoader
+git checkout dev-C    # C 负责 MQTT
+git checkout dev-D    # D 负责 SPI + 集成
+```
+
+### 4. 用 Keil 编译
+
+**VS Code 只用来编辑代码，编译必须用 Keil。**
+
+| 工程 | 路径 | 烧录地址 |
+|---|---|---|
+| APP | `APP工程/project/STM32F103ZET6_Project.uvprojx` | `0x08008000` |
+| BootLoader | `BootLoader工程/project/STM32F103ZET6_Project.uvprojx` | `0x08000000` |
+
+**打开 Keil 后直接 Build（F7）即可，IROM1 已配好。**
+
+> 首次打开 Keil 会自动生成 `.uvoptx`（编译配置文件），这是正常的。
+
+### 5. 找自己的任务
+
+在 VS Code 里搜索 `TODO【A】`（换成你的字母），**所有 TODO 就是你的任务清单**。
+
+每个 TODO 上方都有实现要点注释。
+
+---
+
+## 编码规范（重要）
+
+**所有源文件统一为 UTF-8 with BOM。**
+
+| 编辑器 | 效果 |
+|---|---|
+| VS Code | 正常显示中文（已配置 `files.encoding: utf8bom`） |
+| Keil | 正常显示中文（识别 BOM） |
+
+> ⚠️ **不要用记事本另存为 ANSI/GBK**，会把中文注释弄乱。
+> 如果 Keil 里中文乱码：`Edit` → `Configuration` → `Editor` → `Encoding` 选 `UTF-8`
+
+---
+
 ## 项目简介
 
 通过 4G 模块从阿里云下载固件，写入外部 Flash（W25Q128），

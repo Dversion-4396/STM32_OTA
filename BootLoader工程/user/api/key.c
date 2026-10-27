@@ -1,21 +1,21 @@
-#include "key.h"
+ï»¿#include "key.h"
 #include "delay.h"
 void Key_Init(void)
 {
     RCC->APB2ENR |= RCC_APB2_GPIOA_CLOCK_ENABLE | RCC_APB2_GPIOE_CLOCK_ENABLE;
-    ///¶Ôkey_up³õÊ¼»¯ ¶ÔÓ¦pa0   Æä¹¤×÷Ä£Ê½ÎªÏÂÀ­
+    ///å¯¹key_upåˆå§‹åŒ– å¯¹åº”pa0   å…¶å·¥ä½œæ¨¡å¼ä¸ºä¸‹æ‹‰
     GPIOA->CRL &= ~(0x0f);
     GPIOA->CRL |= Pull_Up_Or_Pull_Down_Input_Mode;
     GPIOA->ODR &= ~(0x01);
-    ///¶Ôkey2 ³õÊ¼»¯ ¶ÔÓ¦¶Ë¿ÚÎªpe2 Æä¹¤×÷Ä£Ê½ÎªÉÏÀ­
+    ///å¯¹key2 åˆå§‹åŒ– å¯¹åº”ç«¯å£ä¸ºpe2 å…¶å·¥ä½œæ¨¡å¼ä¸ºä¸Šæ‹‰
     GPIOE->CRL &= ~(0x0f<<8);
     GPIOE->CRL |= (Pull_Up_Or_Pull_Down_Input_Mode<<8);
     GPIOE->ODR |= (0x01<<2);
-     ///¶Ôkey1 ³õÊ¼»¯ ¶ÔÓ¦¶Ë¿ÚÎªpe3 Æä¹¤×÷Ä£Ê½ÎªÉÏÀ­
+     ///å¯¹key1 åˆå§‹åŒ– å¯¹åº”ç«¯å£ä¸ºpe3 å…¶å·¥ä½œæ¨¡å¼ä¸ºä¸Šæ‹‰
     GPIOE->CRL &= ~(0x0f<<12);
     GPIOE->CRL |= (Pull_Up_Or_Pull_Down_Input_Mode<<12);
     GPIOE->ODR |= (0x01<<3);
-     ///¶Ôkey0 ³õÊ¼»¯ ¶ÔÓ¦¶Ë¿ÚÎªpe4 Æä¹¤×÷Ä£Ê½ÎªÉÏÀ­
+     ///å¯¹key0 åˆå§‹åŒ– å¯¹åº”ç«¯å£ä¸ºpe4 å…¶å·¥ä½œæ¨¡å¼ä¸ºä¸Šæ‹‰
     GPIOE->CRL &= ~(0x0f<<16);
     GPIOE->CRL |= (Pull_Up_Or_Pull_Down_Input_Mode<<16);
     GPIOE->ODR |= (0x01<<4);

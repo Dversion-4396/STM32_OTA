@@ -1,36 +1,36 @@
-#ifndef _MODBUS_H
+ï»¿#ifndef _MODBUS_H
 #define _MODBUS_H
 #include "common.h"
 #include "usart.h"
 #define LOCAL_ADDR (0X01)
 
-//// ²¨ÌØÂÊ
+//// æ³¢ç‰¹ç‡
 #define RS485_BRR (9600)
-//// 485µ¥Ò»×Ö½Ú´«µİËùĞèÊ±¼ä
+//// 485å•ä¸€å­—èŠ‚ä¼ é€’æ‰€éœ€æ—¶é—´
 #define BYTE_INTERVAL_TIME (1000000 / (RS485_BRR / 10))
 
 #define USING_T3_5 3.5
 
 
 #ifdef USING_T3_5
-/// Ìõ¼ş±àÒë
+/// æ¡ä»¶ç¼–è¯‘
 /*
-    ÈôÊ¹ÓÃ 3.5 ¸ö×Ö½Ú¼ä¸ôÊ±¼ä£¬Ôò¶¨Òå USING_T3_5
+    è‹¥ä½¿ç”¨ 3.5 ä¸ªå­—èŠ‚é—´éš”æ—¶é—´ï¼Œåˆ™å®šä¹‰ USING_T3_5
 */
 #define DATA_FRAME_TIME_INTERVAL (BYTE_INTERVAL_TIME * 3 + (BYTE_INTERVAL_TIME >> 1))
 #endif
 /*
-    ÈôÊ¹ÓÃ 4 ¸ö×Ö½Ú¼ä¸ôÊ±¼ä£¬Ôò¶¨Òå USING_T4_0
+    è‹¥ä½¿ç”¨ 4 ä¸ªå­—èŠ‚é—´éš”æ—¶é—´ï¼Œåˆ™å®šä¹‰ USING_T4_0
 */
 #ifdef USING_T4_0
 #define DATA_FRAME_TIME_INTERVAL (BYTE_INTERVAL_TIME * 4)
 #endif
-/// @brief  MOSBus Êı¾İ½ÓÊÜ¿ØÖÆ¶¨Ê±Ê¹ÓÃTim7 ÊµÏÖ
+/// @brief  MOSBus æ•°æ®æ¥å—æ§åˆ¶å®šæ—¶ä½¿ç”¨Tim7 å®ç°
 void Modbus_Tim_Config(void);
-/// @brief ·¢ËÍ Modbus 03 ¹¦ÄÜÂëÀ´½øĞĞ¶Ô¶à¸ö¼Ä´æÆ÷Êı¾İµÄÌáÈ¡²Ù×÷
-/// @param device_addr ´Ó»úÉè±¸µØÖ·
-/// @param reg_addr ´Ó»ú¼Ä´æÆ÷ÆğÊ¼µØÖ·
-/// @param reg_count ÆÚÍû¶ÁÈ¡µÄ¼Ä´æÆ÷¸öÊı
+/// @brief å‘é€ Modbus 03 åŠŸèƒ½ç æ¥è¿›è¡Œå¯¹å¤šä¸ªå¯„å­˜å™¨æ•°æ®çš„æå–æ“ä½œ
+/// @param device_addr ä»æœºè®¾å¤‡åœ°å€
+/// @param reg_addr ä»æœºå¯„å­˜å™¨èµ·å§‹åœ°å€
+/// @param reg_count æœŸæœ›è¯»å–çš„å¯„å­˜å™¨ä¸ªæ•°
 void Modbus_Send_03_Cmd(u8 device_addr, u16 reg_addr, u16 reg_count);
 
 /// @brief
@@ -39,11 +39,11 @@ void Modbus_Send_03_Cmd(u8 device_addr, u16 reg_addr, u16 reg_count);
 /// @return
 u8 Modbus_Analysis(u8 *buffer, u16 count);
 /**
- * @brief Modbus CRC-16 ¼ÆËãº¯Êı
+ * @brief Modbus CRC-16 è®¡ç®—å‡½æ•°
  *
- * @param data   ´ı¼ÆËãµÄÊı¾İÖ¸Õë
- * @param length Êı¾İ³¤¶È£¨×Ö½ÚÊı£©
- * @return CRCĞ£ÑéÖµ£¨16Î»£©
+ * @param data   å¾…è®¡ç®—çš„æ•°æ®æŒ‡é’ˆ
+ * @param length æ•°æ®é•¿åº¦ï¼ˆå­—èŠ‚æ•°ï¼‰
+ * @return CRCæ ¡éªŒå€¼ï¼ˆ16ä½ï¼‰
  */
 uint16_t Modbus_CRC16(const uint8_t *data, size_t length);
 void Modbus_SendData_03(u8 device_addr, u16 reg_count, u16 *data);

@@ -1,9 +1,9 @@
-#ifndef _ADC_H
+ï»¿#ifndef _ADC_H
 #define _ADC_H
 #include "common.h"
 extern u16 lsen_value;
 
-/// @brief ADC Ä£¿é³õÊ¼»¯º¯Êı 
+/// @brief ADC æ¨¡å—åˆå§‹åŒ–å‡½æ•° 
 void ADC3_Init(void);
 void Get_lsen_value(void);
 #endif

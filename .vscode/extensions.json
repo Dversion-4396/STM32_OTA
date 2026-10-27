@@ -1,0 +1,11 @@
+{
+  "recommendations": [
+    "ms-vscode.cpptools",
+    "marus25.cortex-debug",
+    "ms-vscode.vscode-serial-monitor"
+  ],
+  "unwantedRecommendations": [
+    "dan-c-underwood.arm",
+    "danwakeem.asm"
+  ]
+}

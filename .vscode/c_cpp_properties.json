@@ -1,0 +1,56 @@
+{
+  "configurations": [
+    {
+      "name": "STM32-APP",
+      "includePath": [
+        "${workspaceFolder}/APP工程/user",
+        "${workspaceFolder}/APP工程/user/api",
+        "${workspaceFolder}/APP工程/libraries/CMSIS",
+        "${workspaceFolder}/APP工程/libraries/CMSIS/CM3",
+        "${workspaceFolder}/APP工程/libraries/STM32F10x_StdPeriph_Driver/inc"
+      ],
+      "defines": [
+        "USE_STDPERIPH_DRIVER",
+        "STM32F10X_HD",
+        "VECT_TAB_OFFSET=0x8000"
+      ],
+      "compilerPath": "",
+      "cStandard": "c99",
+      "cppStandard": "c++11",
+      "intelliSenseMode": "gcc-arm",
+      "browse": {
+        "path": [
+          "${workspaceFolder}/APP工程/user",
+          "${workspaceFolder}/APP工程/libraries"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      }
+    },
+    {
+      "name": "STM32-BootLoader",
+      "includePath": [
+        "${workspaceFolder}/BootLoader工程/user",
+        "${workspaceFolder}/BootLoader工程/user/api",
+        "${workspaceFolder}/BootLoader工程/libraries/CMSIS",
+        "${workspaceFolder}/BootLoader工程/libraries/CMSIS/CM3",
+        "${workspaceFolder}/BootLoader工程/libraries/STM32F10x_StdPeriph_Driver/inc"
+      ],
+      "defines": [
+        "USE_STDPERIPH_DRIVER",
+        "STM32F10X_HD"
+      ],
+      "compilerPath": "",
+      "cStandard": "c99",
+      "cppStandard": "c++11",
+      "intelliSenseMode": "gcc-arm",
+      "browse": {
+        "path": [
+          "${workspaceFolder}/BootLoader工程/user",
+          "${workspaceFolder}/BootLoader工程/libraries"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      }
+    }
+  ],
+  "version": 4
+}

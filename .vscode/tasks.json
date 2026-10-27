@@ -1,0 +1,14 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "提示：用 Keil 编译",
+      "type": "shell",
+      "command": "echo",
+      "args": [
+        "请用 Keil MDK 打开 project/*.uvprojx 编译。VS Code 仅用于编辑和查看代码。"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

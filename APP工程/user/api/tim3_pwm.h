@@ -1,4 +1,4 @@
-#ifndef _TIME3_PWM_H
+﻿#ifndef _TIME3_PWM_H
 #define _TIME3_PWM_H
 #include "common.h"
 void TIM3_CH2_PB5_PWM(u16 psc, u16 arr);

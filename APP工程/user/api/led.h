@@ -1,10 +1,10 @@
-#ifndef _LED_H
+ï»¿#ifndef _LED_H
 #define _LED_H
 
 #define Led0_Toggle GPIOB->ODR ^= (0x01 << 5)
 #define Led1_Toggle GPIOE->ODR ^= (0x01 << 5)
 #include "common.h"
-/// @brief ¶Ôled³õÊ¼»¯    pb5¶ÔÓ¦ds0 led0 pe5¶ÔÓ¦ds1 led1
+/// @brief å¯¹ledåˆå§‹åŒ–    pb5å¯¹åº”ds0 led0 pe5å¯¹åº”ds1 led1
 void Led_Init(void);
 
 void Led_Breath(u32 Brightness);

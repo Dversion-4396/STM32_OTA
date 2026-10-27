@@ -1,0 +1,59 @@
+{
+  "files.encoding": "utf8bom",
+  "files.autoGuessEncoding": false,
+  "files.eol": "\r\n",
+  "files.trimTrailingWhitespace": false,
+  "files.insertFinalNewline": true,
+  "editor.detectIndentation": false,
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "editor.rulers": [],
+  "editor.renderWhitespace": "none",
+  "[c]": {
+    "editor.defaultFormatter": null,
+    "editor.formatOnSave": false
+  },
+  "C_Cpp.intelliSenseEngine": "default",
+  "C_Cpp.autocomplete": "default",
+  "C_Cpp.errorSquiggles": "enabled",
+  "C_Cpp.default.cStandard": "c99",
+  "C_Cpp.default.intelliSenseMode": "gcc-arm",
+  "C_Cpp_Runner.cCompilerPath": "",
+  "C_Cpp_Runner.cppCompilerPath": "",
+  "C_Cpp_Runner.debuggerPath": "",
+  "C_Cpp_Runner.cStandard": "",
+  "C_Cpp_Runner.cppStandard": "",
+  "C_Cpp_Runner.useMsvc": false,
+  "C_Cpp_Runner.enableWarnings": false,
+  "C_Cpp_Runner.warningsAsError": false,
+  "C_Cpp_Runner.compilerArgs": [],
+  "C_Cpp_Runner.linkerArgs": [],
+  "C_Cpp_Runner.includePaths": [],
+  "C_Cpp_Runner.includeSearch": [
+    "*",
+    "**/*"
+  ],
+  "C_Cpp_Runner.excludeSearch": [
+    "**/build",
+    "**/build/**",
+    "**/Objects",
+    "**/Objects/**",
+    "**/Listings",
+    "**/Listings/**",
+    "**/.*",
+    "**/.*/**",
+    "**/.vscode",
+    "**/.vscode/**"
+  ],
+  "search.exclude": {
+    "**/Objects": true,
+    "**/Listings": true,
+    "**/.git": true
+  },
+  "files.associations": {
+    "*.uvprojx": "xml",
+    "*.uvoptx": "xml",
+    "*.s": "arm",
+    "*.h": "c"
+  }
+}

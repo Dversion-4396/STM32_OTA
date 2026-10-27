@@ -1,4 +1,4 @@
-#include "beep.h"
+﻿#include "beep.h"
 void Beep_Init(void)
 {
     RCC->APB2ENR |=RCC_APB2_GPIOB_CLOCK_ENABLE;
