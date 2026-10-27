@@ -248,6 +248,7 @@ void MQTT_ConectPack(void)
    
 	// TxDataBuf_Deal(Bemfa_mqtt.Pack_buff, Bemfa_mqtt.Fixed_len + Bemfa_mqtt.Variable_len + Bemfa_mqtt.Payload_len); //加入发送数据缓冲区
     Usart3_SendBuffer(Bemfa_mqtt.Pack_buff,Bemfa_mqtt.Fixed_len + Bemfa_mqtt.Variable_len + Bemfa_mqtt.Payload_len);
+	//// DDDDD
 }
 
 /*=====================================================================
