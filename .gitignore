@@ -32,7 +32,7 @@
 JLinkLog.txt
 JLinkSettings.ini
 
-# 注意：*.uvoptx 不忽略！
+# uvoptx 是 Keil 打开 uvprojx 时自动生成的，含用户本地路径，不进版本库
 #       它记录了编译配置（优化等级、宏定义等），组员需要
 
 # ---------- 编译输出目录（不提交）----------
@@ -70,4 +70,4 @@ tmp/
 # ---------- Keil 运行时临时文件 ----------
 uv4.log.lock
 *.lock
-**/project/.vscode/
+**/project/.vscode/*.uvoptx
