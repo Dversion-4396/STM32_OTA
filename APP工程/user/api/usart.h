@@ -1,7 +1,7 @@
 ﻿#ifndef _USART_H
 #define _USART_H
 #include "common.h"
-#include "modbus.h"
+/* modbus.h 已移除：与 OTA 无关 */
 #define USART3_BUFFER_SIZE (1024)   /* ★改为 1024：HTTP 下载一次返回约 274 字节★ */
 #define USART1_BUFFER_SIZE (256)
 #define USART2_BUFFER_SIZE (256)

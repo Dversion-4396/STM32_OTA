@@ -13,7 +13,7 @@
 #define MY_FLAG 0
 #include "usart.h"
 #include "delay.h"
-#include "tim3_pwm.h"
+/* tim3_pwm.h 已移除：与 OTA 无关 */
 /* ----------------------------------------------------------------------------
  *  USART1：PA9=TX，PA10=RX
  * -------------------------------------------------------------------------- */
@@ -276,7 +276,6 @@ void Usart2_Init(u32 brr)
     ///// 将设置传入
     USART_Init(USART2, &USART_InitStructure);
     /// 中断使能
-    // USART_ITConfig(USART2, USART_IT_IDLE, ENABLE);
     USART_ITConfig(USART2, USART_IT_RXNE, ENABLE);
 
     /*
@@ -388,28 +387,24 @@ void USART2_IRQHandler(void)
         usart2_value.data[usart2_value.count++] = data;
 
 
-        // Usart1_SendBuffer(usart2_value.data, usart2_value.count);
         
         // usart2_value.data[usart2_value.count++] = USART_ReceiveData(USART2);
 
-        // if (usart2_value.count == USART2_BUFFER_SIZE)
         // {
         //     usart2_value.flag = 1;
 
         //     /*
         //     TODO 临时数据展示处理，通过 USART1 模块发送数据到 PC 串口调试助手
         //     */
-        //     Usart1_SendBuffer(usart2_value.data, usart2_value.count);
-        //     Modbus_Analysis(usart2_value.data, usart2_value.count);
+        
         // }
     }
 
     // 此函数为获取指定中断状态
 
-    // if (USART_GetITStatus(USART2, USART_IT_IDLE))
     // {
 
-    //     Modbus_Analysis(usart2_value.data, usart2_value.count);
+    
     //     ////先读SR 再读DR 可清除中断标识符
     //     /// 注 不能用标准库自带的中断清理函数 USART_ClearFlag 此函数会直接向其写入零 而有些标识符为只读量只能通过对应操作修改
     //     USART2->SR;
@@ -418,13 +413,10 @@ void USART2_IRQHandler(void)
     //     /*
     //     TODO 临时数据展示处理，通过 USART1 模块发送数据到 PC 串口调试助手
     //     */
-    //     if (strstr(usart2_value.data, "led1"))
     //     {
-    //         Led1_Toggle;
     //         /* code */
     //     }
 
-    //     Usart1_SendBuffer(usart2_value.data, usart2_value.count);
     // }
 }
 
@@ -550,87 +542,42 @@ void Usart3_Init(u32 brr)
  *  结论：名字写成全大写 USART3_IRQHandler 即可，不需要任何额外的"保活"手段。 */
 void USART3_IRQHandler(void)
 {
-    TIM3_CH4_PB1_PWM(72, 20000);
-    /*
-    1. 数据接收缓冲区清除
-    2. IDLE 中断处理
-    3. RXNE 中断处理
-    */
-    TIM3_CH4_PB1_PWM_Set_CCR4(1500);
-    if (usart3_value.flag)
-    {
-        memset(&usart3_value, 0, sizeof(USART_Data));
-    }
+    /*------------------------------------------------------------------
+     * USART3 中断服务函数（4G 模块 L511-2）
+     *
+     * ★★ 中断里只做"收数据 + 置标志"，不要放业务逻辑 ★★
+     *
+     * 原来这里做了三件不该做的事：
+     *   1. 每次进中断都重配 PWM（TIM3_CH4_PB1_PWM）
+     *      → 严重拖慢中断，4G 数据会丢
+     *   2. if(flag) memset 清整个结构体
+     *      → 把 flag/count/data 全清掉，数据丢失
+     *   3. 判断 "PWM"/"Beep"/"Led" 字符串
+     *      → 这是给 WiFi 模块用的，4G 的 AT 数据会误触发
+     *
+     * 现在改为：只收数据、只置标志，业务逻辑由主循环的
+     *          U3_EventDispatch() 处理
+     *------------------------------------------------------------------*/
 
-    // 3. RXNE 中断处理
+    /*---------- 1. RXNE：收到一个字节 ----------*/
     if (USART3->SR & (0x01 << 5))
     {
-        usart3_value.data[usart3_value.count++] = USART3->DR;
-
-        if (USART3_BUFFER_SIZE == usart3_value.count)
+        if (usart3_value.count < USART3_BUFFER_SIZE)
         {
-            usart3_value.flag = 1;
-            /*
-            TODO 数据临时处理
-                USART3 目前连接的是 WiFi 模块
-                USART1 是连接到 PC 端，可以在串口调试助手看到数据
-            */
-            Usart1_SendString("USART3 RX : ");
-            Usart1_SendBuffer(usart3_value.data, usart3_value.count);
-            Usart1_SendString("\r\n");
+            usart3_value.data[usart3_value.count++] = USART3->DR;
+        }
+        else
+        {
+            /* 缓冲满，读掉丢弃，防止溢出 */
+            USART3->DR;
         }
     }
-    // 2. IDLE 中断处理
+
+    /*---------- 2. IDLE：一帧数据收完 ----------*/
     if (USART3->SR & (0x01 << 4))
     {
-        USART3->DR;
-
-        usart3_value.flag = 1;
-
-        /*
-        TODO 数据临时处理
-            USART3 目前连接的是 WiFi 模块
-            USART1 是连接到 PC 端，可以在串口调试助手看到数据
-        */
-        Usart1_SendString("USART3 RX : ");
-        Usart1_SendBuffer(usart3_value.data, usart3_value.count);
-        Usart1_SendString("\r\n");
-        if (strstr(usart3_value.data + 3, "\"PWM\":0"))
-        {
-            TIM3_CH4_PB1_PWM_Set_CCR4(1500);
-        }
-        if (strstr(usart3_value.data + 3, "\"PWM\":1"))
-        {
-            TIM3_CH4_PB1_PWM_Set_CCR4(500);
-        }
-        if (strstr(usart3_value.data + 3, "\"PWM\":2"))
-        {
-            TIM3_CH4_PB1_PWM_Set_CCR4(1000);
-        }
-        if (strstr(usart3_value.data + 3, "\"Beep\":true"))
-        {
-            Beep_On;
-        }
-        if (strstr(usart3_value.data + 3, "\"Beep\":false"))
-        {
-            Beep_Off;
-        }
-        if (strstr(usart3_value.data + 3, "\"Led_Red\":true"))
-        {
-            Led_Low(Led_Red);
-        }
-        if (strstr(usart3_value.data + 3, "\"Led_Red\":false"))
-        {
-            Led_High(Led_Red);
-        }
-        if (strstr(usart3_value.data + 3, "\"Led_Green\":true"))
-        {
-            Led_Low(Led_Green);
-        }
-        if (strstr(usart3_value.data + 3, "\"Led_Green\":false"))
-        {
-            Led_High(Led_Green);
-        }
+        USART3->DR;                  /* 读 DR 清 IDLE 标志 */
+        usart3_value.flag = 1;       /* 只置标志，交给主循环处理 */
     }
 }
 

@@ -396,11 +396,6 @@
               <FilePath>..\libraries\STM32F10x_StdPeriph_Driver\src\misc.c</FilePath>
             </File>
             <File>
-              <FileName>stm32f10x_adc.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\libraries\STM32F10x_StdPeriph_Driver\src\stm32f10x_adc.c</FilePath>
-            </File>
-            <File>
               <FileName>stm32f10x_bkp.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\libraries\STM32F10x_StdPeriph_Driver\src\stm32f10x_bkp.c</FilePath>
@@ -601,24 +596,9 @@
           <GroupName>api</GroupName>
           <Files>
             <File>
-              <FileName>beep.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\beep.c</FilePath>
-            </File>
-            <File>
               <FileName>delay.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\user\api\delay.c</FilePath>
-            </File>
-            <File>
-              <FileName>key.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\key.c</FilePath>
-            </File>
-            <File>
-              <FileName>led.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\led.c</FilePath>
             </File>
             <File>
               <FileName>usart.c</FileName>
@@ -626,39 +606,9 @@
               <FilePath>..\user\api\usart.c</FilePath>
             </File>
             <File>
-              <FileName>tim6.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\tim6.c</FilePath>
-            </File>
-            <File>
-              <FileName>tim3_pwm.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\tim3_pwm.c</FilePath>
-            </File>
-            <File>
               <FileName>mqtt.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\user\api\mqtt.c</FilePath>
-            </File>
-            <File>
-              <FileName>dht11.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\dht11.c</FilePath>
-            </File>
-            <File>
-              <FileName>modbus.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\modbus.c</FilePath>
-            </File>
-            <File>
-              <FileName>adc.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\adc.c</FilePath>
-            </File>
-            <File>
-              <FileName>systick.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\user\api\systick.c</FilePath>
             </File>
             <File>
               <FileName>i2c.c</FileName>

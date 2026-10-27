@@ -45,7 +45,6 @@
 /// 一些宏函数
 #define Led0_Toggle (GPIOB->ODR ^= (0x01 << 5))
 #define Led1_Toggle (GPIOE->ODR ^= (0x01 << 5))
-#define Beep_Toggle (GPIOB->ODR ^= (0x01 << 8))
 #define Usart1_Off (USART1->CR1 &= ~(0x01 << 13))
 #define Usart1_Open (USART1->CR1 |= (0x01 << 13))
 #define Usart2_Off (USART2->CR1 &= ~(0x01 << 13))
@@ -54,8 +53,6 @@
 #define Usart3_Open (USART3->CR1 |= (0x01 << 13))
 #define Led_High(GPIO) (GPIO->ODR |= (0x01 << 5)) /* 灭 */
 #define Led_Low(GPIO) (GPIO->ODR &= ~(0x01 << 5)) /* 亮 */
-#define Beep_On (GPIOB->ODR |= (0x01 << 8))
-#define Beep_Off (GPIOB->ODR &= ~(0x01 << 8))
 #define Led_Red GPIOB   /* DS0，PB5，低电平点亮 */
 #define Led_Green GPIOE /* DS1，PE5，低电平点亮 */
 #define OLED_ADDR (0X3C)
