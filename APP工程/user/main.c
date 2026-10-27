@@ -155,6 +155,8 @@ void ActiveEvent(void)
  *====================================================================*/
 int main(void)
 {
+    u8 ret;     /* CAT1_SendAT 的返回值：0=成功 1=超时 */
+
     /*---------- 1. 初始化调试串口（必须最先）----------*/
     Usart1_Init(USART1_BRR);
     Usart1_SendString("\r\n\r\n");
@@ -175,6 +177,7 @@ int main(void)
     {
         Usart1_SendString("GPRS 激活失败，检查 SIM 卡和信号\r\n");
     }
+
 
     /*---------- 5. 各模块初始化 ----------*/
     /* TODO【D】：EEPROM 和 SPI Flash 初始化 */
