@@ -13,7 +13,7 @@
         "${workspaceFolder}/BootLoader工程/libraries/CMSIS",
         "${workspaceFolder}/BootLoader工程/libraries/CMSIS/CM3",
         "${workspaceFolder}/BootLoader工程/libraries/STM32F10x_StdPeriph_Driver/inc",
-        "${workspaceFolder}/tools/armcc_include"
+        "${workspaceFolder}/tools/gcc_include"
       ],
       "defines": [
         "USE_STDPERIPH_DRIVER",
@@ -29,7 +29,7 @@
           "${workspaceFolder}/APP工程/libraries",
           "${workspaceFolder}/BootLoader工程/user",
           "${workspaceFolder}/BootLoader工程/libraries",
-          "${workspaceFolder}/tools/armcc_include"
+          "${workspaceFolder}/tools/gcc_include"
         ],
         "limitSymbolsToIncludedHeaders": false
       }
