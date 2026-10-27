@@ -1,4 +1,4 @@
----[开机]---
+﻿---[开机]---
 ESERVED - Not connect - - 109. RESERVED - Not connect - - (1)：未使用时的建议状态。 L511-Y6 系列的 VDD_EXT 在睡眠情况下可以保持 1.8V 的输出；其余 1.8V 接口的电压域在模块睡眠的情况下会被关闭， MAIN_DTR 在模块睡眠的情况下可以正常工作。 L511-Y6 系列的 USB_BOOT（PIN82）引脚在模块开机成功前禁止上拉到高电平。 如果模块开启了 AT 串口唤醒功能，MAIN_RXD 信号在模块睡眠后电压域会变成 1.1V。 引脚类型说明 引脚 类型 PI Power input PO Power output DI Digital input DO Digital output IO Input/output AI Analog input ANT Antenna G Ground 模块封装信息 模块结构尺寸 模块外围尺寸信息正视图，背视图和侧视图如下图所示。 产品标签 L511-Y6 系列标签 标签描述 编码 描述 A Pin1 脚 B 公司 Logo C 模块的成品料号 D 二维码—包括 IMEI number和 SN number E SN number F IMEI number G 模块名字 H 模块配置 I 3C 认证 模块封装尺寸（单位：mm） 模块封装推荐焊盘 （Top view 单位：mm） 接口电路参考设计 电源部分 电源 VBAT 为模块的主电源，其电压输入范围是 3.3V 到 4.5V，推荐电压为 3.8V。在网络较差的环境下，天线会以最大功率发射，为了保证
 
 ---[开机]---
