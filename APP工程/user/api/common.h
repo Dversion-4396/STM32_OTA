@@ -1,4 +1,4 @@
-﻿#ifndef _COMMON_H
+#ifndef _COMMON_H
 #define _COMMON_H
 #include "stm32f10x.h"
 #include <stdio.h>
@@ -77,11 +77,21 @@ I2C 设备响应对应超时时间，时间为 10 ms
 
 
 /*=====================================================================
- * ★★ 以下为 OTA 项目追加内容（原工程内容保持不变）★★
- * 维护：D
+ * ★★ 以下为 OTA 项目追加内容（上半部分原工程内容保持不变）★★
  *
- * ★★ 警告：这个文件两个工程（APP / BootLoader）必须完全一致 ★★
- * ★★ 修改前必须全组开会通知，否则 EEPROM 结构体错位，OTA 永远不触发 ★★
+ * 维护：D
+ * 平台：巴法云（bemfa）—— 2026-10-27 起从阿里云切换过来
+ *
+ * ★★★★ 警告 ★★★★
+ * 这个文件两个工程（APP / BootLoader）必须【逐字节完全一致】
+ * 修改前必须全组开会通知，否则：
+ *
+ *   APP 按结构体 A 写 EEPROM 地址 0
+ *   BootLoader 按结构体 B 读 EEPROM 地址 0
+ *        ↓
+ *   字段错位 → OTA_flag 读到的值不对 → OTA 永远不触发
+ *
+ * 改完必须两边都更新，并且做一次"写-读-比对"测试。
  *=====================================================================*/
 
 /*==================== 类型别名（原工程可能没有，补上）====================*/
@@ -92,58 +102,141 @@ typedef unsigned short u16;
 typedef unsigned int   u32;
 #endif
 
-/*==================== Flash 分区（★第一天锁死★）====================*/
-#define FLASH_BASE_ADDR       0x08000000
+/*=====================================================================
+ * 一、Flash 分区（★第一天就要锁死，后面不许改★）
+ *
+ * 战神V1 是 STM32F103ZET6：
+ *   片内 Flash 512KB = 0x08000000 ~ 0x0807FFFF
+ *   页大小 2KB（F103 的页是 2KB，不是 G0 的 2KB 扇区，注意区分）
+ *
+ * 分区方案（双区单备份）：
+ *   ┌──────────────────────────────────────────┐
+ *   │ 0x08000000   BootLoader     32KB (16页)  │
+ *   ├──────────────────────────────────────────┤
+ *   │ 0x08008000   APP 运行区    480KB (240页) │
+ *   │              ↑ 平时程序跑在这里           │
+ *   └──────────────────────────────────────────┘
+ *
+ * 为什么 BootLoader 要 32KB：
+ *   实测完整 BootLoader（含 Flash 读写、I2C、SPI、串口、OTA 搬移）
+ *   编译后约 12~18KB，留 32KB 有充足余量。
+ *   如果超过 32KB，必须调整 FLASH_BOOT_PAGE_NUM 并同步改 APP 的 IROM1。
+ *===================================================================*/
+#define FLASH_BASE_ADDR       0x08000000        /* 片内 Flash 起始地址 */
 #define FLASH_PAGE_SIZE       2048              /* F103ZET6 页大小 2KB */
-#define FLASH_TOTAL_PAGES     256               /* 512KB / 2KB */
+#define FLASH_TOTAL_PAGES     256               /* 512KB / 2KB = 256 页 */
 
 #define FLASH_BOOT_PAGE_NUM   16                /* BootLoader 占 16 页 */
 #define FLASH_BOOT_SIZE       (FLASH_BOOT_PAGE_NUM * FLASH_PAGE_SIZE)   /* 0x8000 = 32KB */
 
 #define FLASH_A_ADDR          (FLASH_BASE_ADDR + FLASH_BOOT_SIZE)       /* 0x08008000 */
-#define FLASH_A_START_PAGE    16
-#define FLASH_A_PAGE_NUM      240
+#define FLASH_A_START_PAGE    16                /* APP 从第 16 页开始 */
+#define FLASH_A_PAGE_NUM      240               /* APP 占 240 页 */
 #define FLASH_A_SIZE          (FLASH_A_PAGE_NUM * FLASH_PAGE_SIZE)      /* 480KB */
 
-/*==================== OTA 状态标志 ====================*/
-/* EEPROM 里 OTA_flag == 这个值，表示有新固件待搬移 */
+/*=====================================================================
+ * 二、OTA 状态标志
+ *
+ * 流程：
+ *   ① APP 下载完固件 → 写 OTA_flag = BOOT_STA_O → 重启
+ *   ② BootLoader 上电读 OTA_flag
+ *        == BOOT_STA_O → 把 W25Q128 里的固件搬到片内 Flash
+ *                     → 清 OTA_flag = 0
+ *                     → 跳转 APP
+ *        != BOOT_STA_O → 直接跳转 APP
+ *
+ * 为什么用 0x5AA5C33C 这么怪的数：
+ *   这是一个"魔数"，防止 EEPROM 掉电/干扰产生的随机值误触发 OTA。
+ *   EEPROM 未初始化时通常是 0x00 或 0xFF，不会恰好等于这个值。
+ *===================================================================*/
 #define BOOT_STA_O            0x5AA5C33C
 
-/*==================== 三元组长度（★硬校验，错一个字节就拒绝★）====================*/
-#define PRODUCTKEY_LEN        11                /* ProductKey 必须正好 11 位 */
-#define DEVICENAME_LEN        32                /* DeviceName ≤ 32 位 */
-#define DEVICESECRET_LEN      32                /* DeviceSecret 必须正好 32 位 */
+/*=====================================================================
+ * 三、巴法云平台参数长度
+ *
+ * ★ 和阿里云的巨大区别 ★
+ *   阿里云：三元组（ProductKey 11位 + DeviceName + DeviceSecret 32位）
+ *           还要用 HMAC-SHA1 算密码，需要移植加密库
+ *   巴法云：只要一个 UID（32位私钥）
+ *           密码就是 UID 本身，不需要任何签名算法
+ *
+ * 所以原来那三个 PRODUCTKEY_LEN / DEVICENAME_LEN / DEVICESECRET_LEN
+ * 全部删掉了，换成 UID 一个。
+ *===================================================================*/
+#define BEMFA_UID_LEN         32                /* 巴法云私钥，固定 32 位 */
+#define BEMFA_TOPIC_LEN       32                /* 订阅的 Topic 名字长度 */
 #define VERSION_LEN           23                /* 版本号必须正好 23 位 */
 
-#define VALID_ALICER_DATA     0xDD              /* valid_cer == 这个值 = 三元组有效 */
+#define VALID_BEMFA_DATA      0xDD              /* valid_flag == 这个值 = 参数有效 */
 #define OTA_URL_LEN           512               /* OTA 下载地址缓冲区长度 */
 
-/*==================== EEPROM 结构体（★两个工程必须完全一致★）====================*/
+/*=====================================================================
+ * 四、EEPROM 结构体（★两个工程必须完全一致★）
+ *
+ * 存储位置：AT24C02（2Kbit = 256 字节），I2C 地址 0x50
+ * 存储偏移：从地址 0 开始，占用前 99 字节
+ *
+ * 内存布局（共 99 字节）：
+ *   ┌──────┬────────┬──────────────────────────────┐
+ *   │ 偏移 │ 长度   │ 字段                         │
+ *   ├──────┼────────┼──────────────────────────────┤
+ *   │   0  │   1    │ valid_flag（0xDD=有效）       │
+ *   │   1  │  33    │ UID（巴法云私钥）             │
+ *   │  34  │  33    │ Topic（订阅的 Topic 名字）    │
+ *   │  67  │  24    │ Version_ABuff（版本号）       │
+ *   │  91  │   4    │ OTA_firelen（固件大小）       │
+ *   │  95  │   4    │ OTA_flag（0x5AA5C33C=待升级） │
+ *   └──────┴────────┴──────────────────────────────┘
+ *
+ * ★ 为什么每个字段都是 LEN+1 ★
+ *   多留 1 字节给字符串结束符 '\0'，方便直接用 strcpy/sprintf。
+ *   例：UID 32 位 → 数组 33 字节，前 32 存内容，第 33 是 '\0'。
+ *
+ * ★ 为什么 OTA_firelen 和 OTA_flag 用 u32 ★
+ *   固件大小可能超过 65535（u16 上限），必须用 32 位。
+ *   4MB 的固件用 u32 完全够（u32 上限 4GB）。
+ *===================================================================*/
 typedef struct{
-    u8  valid_cer;                              /* 0xDD = 有效 */
-    u8  ProductKeyBuff[PRODUCTKEY_LEN+1];       /* 12 字节 */
-    u8  DeviceNameBuff[DEVICENAME_LEN+1];       /* 33 字节 */
-    u8  DeviceSecretBuff[DEVICESECRET_LEN+1];   /* 33 字节 */
-    u8  Version_ABuff[VERSION_LEN+1];           /* 24 字节 */
+    u8  valid_flag;                             /* 0xDD = 参数有效，其他值 = 未配置 */
+    u8  UID_Buff[BEMFA_UID_LEN+1];              /* 33 字节：巴法云 UID（32位+'\0'） */
+    u8  Topic_Buff[BEMFA_TOPIC_LEN+1];          /* 33 字节：订阅的 Topic 名字 */
+    u8  Version_ABuff[VERSION_LEN+1];           /* 24 字节：固件版本号（23位+'\0'） */
     u32 OTA_firelen;                            /* 固件大小（含 28 字节尾缀） */
     u32 OTA_flag;                               /* 0x5AA5C33C = 需要 OTA */
-} AliyunInfo_CB;
+} BemfaInfo_CB;
 
-#define ALIINFO_STRUCT_LEN    sizeof(AliyunInfo_CB)     /* 共 111 字节 */
+/* 编译期检查：结构体必须是 99 字节，变了就报错 */
+#define BEMFAINFO_STRUCT_LEN    sizeof(BemfaInfo_CB)     /* 应为 99 字节 */
 
-/*==================== 系统事件标志 ====================*/
-#define CONNECT_START   0x80000000      /* 启动连接服务器 */
-#define CONNECT_CMD     0x40000000      /* 连接命令已发，等结果 */
-#define CONNECT_EVENT   0x20000000      /* 已连接上服务器 */
-#define PING_SENT       0x10000000      /* PING 已发送 */
-#define PING_CHECK      0x08000000      /* PING 检查中 */
-#define OTA_EVENT       0x04000000      /* ★收到 OTA 推送，需要下载★ */
+/*=====================================================================
+ * 五、系统事件标志（位掩码，一个 u32 存多个状态）
+ *
+ * 用法：
+ *   置位：SysEventFlag |= OTA_EVENT;
+ *   清位：SysEventFlag &= ~OTA_EVENT;
+ *   判断：if (SysEventFlag & OTA_EVENT) { ... }
+ *
+ * 为什么用位掩码而不是多个 u8 变量：
+ *   主循环里可以一次判断多个事件，效率高；
+ *   而且 32 位读写在 Cortex-M3 上是原子的，中断里置位不会撕裂。
+ *===================================================================*/
+#define CONNECT_START   0x80000000      /* 请求连接巴法云服务器 */
+#define CONNECT_CMD     0x40000000      /* 连接命令已发出，等待 CONNACK */
+#define CONNECT_EVENT   0x20000000      /* 已成功连上巴法云 */
+#define PING_SENT       0x10000000      /* PINGREQ 已发送 */
+#define PING_CHECK      0x08000000      /* 正在等待 PINGRESP */
+#define OTA_EVENT       0x04000000      /* ★收到 OTA 消息，需要下载固件★ */
 
-/*==================== 全局变量（★只在 main.c 里定义，其他文件用 extern★）====================*/
-extern AliyunInfo_CB AliInfoCB;                 /* 三元组 + OTA 状态 */
-extern u32            SysEventFlag;             /* 系统事件标志 */
-extern u8             URL_ABuff[OTA_URL_LEN+1]; /* OTA 下载地址 */
-extern u32            ConnectTimer;             /* 连上服务器后的计时（秒） */
-extern u32            PingTimer;                /* 上次发 PING 的时间 */
+/*=====================================================================
+ * 六、全局变量（★只在 main.c 里定义一次，其他文件用 extern 引用★）
+ *
+ * 定义在：APP工程/user/main.c
+ * 引用方式：包含 common.h 后直接用，不需要再 extern
+ *===================================================================*/
+extern BemfaInfo_CB   BemfaInfoCB;                  /* 巴法云参数 + OTA 状态 */
+extern u32            SysEventFlag;                 /* 系统事件标志（位掩码） */
+extern u8             URL_ABuff[OTA_URL_LEN+1];     /* OTA 下载地址缓冲区 */
+extern u32            ConnectTimer;                 /* 连上服务器后的计时（秒） */
+extern u32            PingTimer;                    /* 上次发 PING 的时间（秒） */
 
 #endif /* _COMMON_H */

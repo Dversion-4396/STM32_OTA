@@ -4,12 +4,25 @@
  * 负责：A（CAT1_ParseOTA 由 C 负责）
  *
  * ★完成顺序建议★：
- *   第 1 步：CAT1_GPIO_Init
- *   第 2 步：CAT1_PowerOn（能开机，NET 灯闪）
- *   第 3 步：CAT1_SendAT（能发 AT 收 OK）← 到这里就算通了
- *   第 4 步：CAT1_ActiveGPRS（能拿到 IP）
+ *   第 1 步：CAT1_GPIO_Init    ← 成品底板不需要，留空
+ *   第 2 步：CAT1_PowerOn      ← 只等模块启动，不控 PWRKEY
+ *   第 3 步：CAT1_SendAT       ← ★核心★ 已跑通
+ *   第 4 步：CAT1_ActiveGPRS   ← ★核心★ 已跑通（拿到 IP 10.57.138.207）
  *   第 5 步：CAT1_HttpInit + CAT1_HttpRead
  *   第 6 步：CAT1_OTA（完整流程）
+ *
+ * ★★★ 当前进度（2026-10-27）★★★
+ *   ✅ CAT1_SendAT      已实现并实测通过
+ *   ✅ CAT1_ActiveGPRS  已实现并实测通过
+ *     实测输出：
+ *       [GPRS] SIM卡就绪
+ *       [GPRS] 网络已注册
+ *       [GPRS] IP: +CGPADDR: 1,"10.57.138.207"
+ *       [GPRS] 成功
+ *   ⏳ CAT1_PowerOn      待写（简单）
+ *   ⏳ CAT1_HttpInit     待写（★先验证 AT+HTTPINIT 是否支持★）
+ *   ⏳ CAT1_HttpRead     待写
+ *   ⏳ CAT1_OTA          待写
  *
  *=====================================================================
  * 2026-10-27 实测记录（串口助手 + USB-TTL）
@@ -354,25 +367,102 @@ u8 CAT1_OTA(char *url, u32 fw_len)
  * 函数：CAT1_ParseOTA
  * 负责：C
  *
- * 云端推送报文：
- *   {"data":{"size":31236,"sign":"xxx","version":"app_2023112855511",
- *   "signMethod":"Md5","url":"https://xxx.aliyuncs.com/fw.bin","md5":"abc"},
- *   "id":123,"message":"success"}
+ * 功能：解析巴法云下发的 OTA 命令
+ * 参数：json - 收到的消息内容
+ * 返回：0 = 解析成功
+ *       1 = 格式不对（找不到逗号分隔）
+ *       2 = 数据不合法（大小或 MD5 长度不对）
  *
- * 实现要点：
- *   1. ptr = strstr(json, "\"data\":");
- *      if(ptr == NULL) return 1;
- *   2. sscanf(ptr,
- *        "\"data\":{\"size\":%lu,\"sign\":\"%[^\"]\",\"version\":\"%[^\"]\","
- *        "\"signMethod\":\"Md5\",\"url\":\"https://%[^\"]\",\"md5\":\"%[^\"]\"},"
- *        "\"id\":%d,\"message\":\"success\"}",
- *        &AliInfoCB.OTA_firelen, sign_buff, AliInfoCB.Version_ABuff,
- *        URL_ABuff, md5_buff, &iddata);
- *   3. 返回值 != 6 就 return 2
- *   4. return 0
+ *=====================================================================
+ * ★ 巴法云报文格式（★和阿里云完全不同★）
  *
- * ★坑：格式串必须和云端报文完全一致（含空格逗号）★
- *       解析失败先把原始报文打印出来逐字符对比
+ *   阿里云：平台推固定 JSON，格式不能改
+ *     {"data":{"size":31236,"sign":"xxx","version":"...",
+ *      "signMethod":"Md5","url":"https://xxx/fw.bin","md5":"abc"},
+ *      "id":123,"message":"success"}
+ *
+ *   巴法云：你在电脑/手机上往 Topic 发什么就是什么，格式自己定
+ *     推荐用纯文本逗号分隔（最简单，好解析）：
+ *       http://xxx.com/fw.bin,31236,abc123def456...
+ *              ↑ URL          ↑ 大小  ↑ MD5（可选）
+ *
+ *   为什么用逗号分隔：
+ *     1. 解析只要 strchr + atoi，十几行搞定
+ *     2. 不用写 JSON 解析器
+ *     3. URL 里正常不会出现逗号，不会有歧义
+ *
+ *=====================================================================
+ * ★ 实现要点 ★
+ *
+ *   u8 CAT1_ParseOTA(char *msg)
+ *   {
+ *       char *p;
+ *       char *url;
+ *       char *size_str;
+ *       char *md5_str;
+ *
+ *       /* 1. 找第一个逗号，前面是 URL *\/
+ *       p = strchr(msg, ',');
+ *       if (p == NULL) return 1;          /* 没有逗号，格式不对 *\/
+ *       *p = '\0';                        /* 把逗号改成字符串结束符 *\/
+ *       url = msg;
+ *       size_str = p + 1;                 /* 逗号后面是大小 *\/
+ *
+ *       /* 2. 找第二个逗号，前面是大小，后面是 MD5 *\/
+ *       p = strchr(size_str, ',');
+ *       if (p != NULL)
+ *       {
+ *           *p = '\0';
+ *           md5_str = p + 1;
+ *       }
+ *       else
+ *       {
+ *           md5_str = NULL;               /* 没有 MD5，跳过校验 *\/
+ *       }
+ *
+ *       /* 3. 保存 URL 和大小 *\/
+ *       if (strlen(url) > OTA_URL_LEN) return 2;
+ *       strcpy((char *)URL_ABuff, url);
+ *       BemfaInfoCB.OTA_firelen = atoi(size_str);
+ *
+ *       /* 4. 校验大小合理性 *\/
+ *       if (BemfaInfoCB.OTA_firelen == 0 ||
+ *           BemfaInfoCB.OTA_firelen > FLASH_A_SIZE) return 2;
+ *
+ *       /* 5. 打印调试 *\/
+ *       Usart1_SendString("[OTA] URL: ");
+ *       Usart1_SendString((char *)URL_ABuff);
+ *       Usart1_SendString("\r\n");
+ *
+ *       return 0;
+ *   }
+ *
+ *=====================================================================
+ * ★ 三个注意点 ★
+ *
+ *   注意 1：atoi 返回 int，固件大小要转 u32
+ *           atoi 上限是 2^31-1（约 2GB），固件一般 < 4MB，够用
+ *           但赋值时要强转：BemfaInfoCB.OTA_firelen = (u32)atoi(size_str);
+ *
+ *   注意 2：strchr 会修改原字符串（把逗号改成 '\0'）
+ *           如果原消息后面还要用，先 strcpy 一份副本再解析
+ *
+ *   注意 3：URL 长度必须检查
+ *           URL_ABuff 只有 513 字节，超了会溢出
+ *           用 strlen 检查后再 strcpy
+ *
+ *=====================================================================
+ * ★ 云端怎么发这条消息 ★
+ *
+ *   方式 1：巴法云网页控制台
+ *     登录 cloud.bemfa.com → 找到你的 Topic → 发送消息
+ *     内容填：http://xxx.com/fw.bin,31236,abc123...
+ *
+ *   方式 2：MQTT 客户端软件（MQTTX）
+ *     连接 bemfa.com:9501，Username/Password 都填 UID
+ *     往 Topic "ota{uid}" 发布消息
+ *
+ *   方式 3：手机 APP（巴法云官方有）
  *====================================================================*/
 u8 CAT1_ParseOTA(char *json)
 {

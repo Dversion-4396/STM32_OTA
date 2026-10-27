@@ -13,7 +13,7 @@
 #include "stmflash.h"
 
 /*==================== 全局变量定义 ====================*/
-AliyunInfo_CB AliInfoCB;
+BemfaInfo_CB BemfaInfoCB;
 u32            SysEventFlag = 0;
 u8             URL_ABuff[OTA_URL_LEN+1];
 u32            ConnectTimer = 0;
