@@ -1,0 +1,45 @@
+{
+  "files.encoding": "utf8bom",
+  "files.autoGuessEncoding": false,
+  "files.eol": "\r\n",
+  "files.trimTrailingWhitespace": false,
+  "editor.detectIndentation": false,
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "[c]": {
+    "editor.defaultFormatter": null,
+    "editor.formatOnSave": false
+  },
+  "C_Cpp.intelliSenseEngine": "default",
+  "C_Cpp.autocomplete": "default",
+  "C_Cpp.errorSquiggles": "enabled",
+  "C_Cpp.default.cStandard": "c99",
+  "C_Cpp.default.intelliSenseMode": "gcc-arm",
+  "C_Cpp.default.includePath": [
+    "${workspaceFolder}/user",
+    "${workspaceFolder}/user/api",
+    "${workspaceFolder}/libraries/CMSIS",
+    "${workspaceFolder}/libraries/CMSIS/CM3",
+    "${workspaceFolder}/libraries/STM32F10x_StdPeriph_Driver/inc",
+    "${workspaceFolder}/../tools/armcc_include"
+  ],
+  "C_Cpp.default.defines": [
+    "USE_STDPERIPH_DRIVER",
+    "STM32F10X_HD"
+  ],
+  "C_Cpp_Runner.useMsvc": false,
+  "C_Cpp_Runner.enableWarnings": false,
+  "C_Cpp_Runner.warningsAsError": false,
+  "C_Cpp_Runner.includePaths": [],
+  "search.exclude": {
+    "**/Objects": true,
+    "**/Listings": true,
+    "**/.git": true
+  },
+  "files.associations": {
+    "*.uvprojx": "xml",
+    "*.uvoptx": "xml",
+    "*.s": "arm",
+    "*.h": "c"
+  }
+}

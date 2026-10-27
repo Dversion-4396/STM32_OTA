@@ -1,0 +1,32 @@
+{
+  "configurations": [
+    {
+      "name": "STM32-APP",
+      "includePath": [
+        "${workspaceFolder}/user",
+        "${workspaceFolder}/user/api",
+        "${workspaceFolder}/libraries/CMSIS",
+        "${workspaceFolder}/libraries/CMSIS/CM3",
+        "${workspaceFolder}/libraries/STM32F10x_StdPeriph_Driver/inc",
+        "${workspaceFolder}/../tools/armcc_include"
+      ],
+      "defines": [
+        "USE_STDPERIPH_DRIVER",
+        "STM32F10X_HD"
+      ],
+      "compilerPath": "",
+      "cStandard": "c99",
+      "cppStandard": "c++11",
+      "intelliSenseMode": "gcc-arm",
+      "browse": {
+        "path": [
+          "${workspaceFolder}/user",
+          "${workspaceFolder}/libraries",
+          "${workspaceFolder}/../tools/armcc_include"
+        ],
+        "limitSymbolsToIncludedHeaders": false
+      }
+    }
+  ],
+  "version": 4
+}

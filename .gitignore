@@ -66,3 +66,8 @@ backup/
 *.err
 _temp/
 tmp/
+
+# ---------- Keil 运行时临时文件 ----------
+uv4.log.lock
+*.lock
+**/project/.vscode/
