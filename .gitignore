@@ -75,3 +75,4 @@ uv4.log.lock
 # ---------- IntelliSense 用的第三方头文件（每台机器路径不同，不进版本库）----------
 # 组员克隆后如果 IntelliSense 报错，看 README 的「IntelliSense 配置」章节
 tools/gcc_include/
+**/project/.vscode/
