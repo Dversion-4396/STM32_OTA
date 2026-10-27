@@ -1,18 +1,28 @@
 {
   "configurations": [
     {
-      "name": "windows-gcc-x64",
+      "name": "STM32-OTA",
       "includePath": [
-        "${workspaceFolder}/**"
+        "${workspaceFolder}/APP工程/user",
+        "${workspaceFolder}/APP工程/user/api",
+        "${workspaceFolder}/APP工程/libraries/CMSIS",
+        "${workspaceFolder}/APP工程/libraries/CMSIS/CM3",
+        "${workspaceFolder}/APP工程/libraries/STM32F10x_StdPeriph_Driver/inc",
+        "${workspaceFolder}/BootLoader工程/user",
+        "${workspaceFolder}/BootLoader工程/user/api",
+        "${workspaceFolder}/BootLoader工程/libraries/CMSIS",
+        "${workspaceFolder}/BootLoader工程/libraries/CMSIS/CM3",
+        "${workspaceFolder}/BootLoader工程/libraries/STM32F10x_StdPeriph_Driver/inc",
+        "${workspaceFolder}/tools/armcc_include"
       ],
       "defines": [
         "USE_STDPERIPH_DRIVER",
         "STM32F10X_HD"
       ],
-      "compilerPath": "E:/ruanj/ucrt64/bin/gcc.exe",
-      "cStandard": "${default}",
-      "cppStandard": "${default}",
-      "intelliSenseMode": "windows-gcc-x64",
+      "compilerPath": "",
+      "cStandard": "c99",
+      "cppStandard": "c++11",
+      "intelliSenseMode": "gcc-arm",
       "browse": {
         "path": [
           "${workspaceFolder}/APP工程/user",
