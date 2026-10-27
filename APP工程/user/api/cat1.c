@@ -207,7 +207,6 @@ u8 CAT1_PowerOn(u16 timeout)
 u8 CAT1_SendAT(char *cmd, char *expect, u16 timeout_ms)
 {
     /* TODO【A】：实现 */
-    usart3_value;
     return 1;
 }
 
