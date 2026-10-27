@@ -1,4 +1,4 @@
-#ifndef _USART_H
+﻿#ifndef _USART_H
 #define _USART_H
 #include "common.h"
 /* 注意：BootLoader 工程不需要 modbus.h（已移除） */
