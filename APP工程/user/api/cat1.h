@@ -37,6 +37,9 @@
 #define PWR_STA             GPIO_ReadInputDataBit(CAT1_CTRL_PORT, STATUS_PIN)
 
 
+
+#define URL_LEN (600)
+
 /*==================== 函数声明 ====================*/
 
 /*---------------------------------------------------------------------
@@ -97,7 +100,7 @@ u8 CAT1_HttpInit(char *url);
  *
  * ★返回二进制数据，含 0x00，必须用 memcpy 不能用 strcpy★
  *-------------------------------------------------------------------*/
-u8 CAT1_HttpRead(u32 offset, u16 len, u8 *outbuf);
+u8 CAT1_HttpRead(u8 *data, u16 datalen, u8 *outbuf, u16 maxlen, u16 *outlen);
 
 /*---------------------------------------------------------------------
  * 函数：CAT1_OTA

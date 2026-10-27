@@ -136,7 +136,6 @@
 
 
 
-
 /*=====================================================================
  * 函数：CAT1_PowerOn
  * 负责：A
@@ -397,8 +396,30 @@ u8 CAT1_ActiveGPRS(void)
 u8 CAT1_HttpInit(char *url)
 {
     /* TODO【A】：实现 */
-
-    return 1;
+    char cmd[URL_LEN];
+    if(CAT1_SendAT("AT+QICSGP=1,1,\"CMNET\",\"\",\"\",1", "OK", 10000))
+    {
+        Usart1_SendString("APN配置失败\r\n");
+        return 1;
+    }
+    if (CAT1_SendAT("AT$HTTPOPEN", "OK", 10000))
+    {
+        Usart1_SendString("[HTTP] 服务开启失败\r\n");
+        return 2;
+    }
+    sprintf(cmd,"AT$HTTPPARA=%s,80",url);
+    if (CAT1_SendAT(cmd,"OK",8000))
+    {
+        Usart1_SendString("[URL ]配置失败\r\n");
+        return 3;
+    }
+    if (CAT1_SendAT("AT$HTTPACTION=0", "OK", 5000))
+    {
+        Usart1_SendString("[GET] 请求发送失败\r\n");
+       return 4;
+    }
+    Usart1_SendString("[HTTP]连接成功\r\n");
+    return 0;
 }
 
 /*=====================================================================
@@ -502,7 +523,7 @@ u8 CAT1_HttpInit(char *url)
  *      下载时要判断：这段是头还是体
  *
  *====================================================================*/
-u8 CAT1_HttpRead(u32 offset, u16 len, u8 *outbuf)
+u8 CAT1_HttpRead(u8 *data, u16 datalen, u8 *outbuf, u16 maxlen, u16 *outlen)
 {
     /* TODO【A】：实现 */
     return 1;
