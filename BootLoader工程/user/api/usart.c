@@ -387,45 +387,7 @@ void USART2_IRQHandler(void)
         // 4. 将数据存储到 USART2 接收数据缓冲区中。
         usart2_value.data[usart2_value.count++] = data;
 
-
-        // Usart1_SendBuffer(usart2_value.data, usart2_value.count);
-        
-        // usart2_value.data[usart2_value.count++] = USART_ReceiveData(USART2);
-
-        // if (usart2_value.count == USART2_BUFFER_SIZE)
-        // {
-        //     usart2_value.flag = 1;
-
-        //     /*
-        //     TODO 临时数据展示处理，通过 USART1 模块发送数据到 PC 串口调试助手
-        //     */
-        //     Usart1_SendBuffer(usart2_value.data, usart2_value.count);
-        //     Modbus_Analysis(usart2_value.data, usart2_value.count);
-        // }
     }
-
-    // 此函数为获取指定中断状态
-
-    // if (USART_GetITStatus(USART2, USART_IT_IDLE))
-    // {
-
-    //     Modbus_Analysis(usart2_value.data, usart2_value.count);
-    //     ////先读SR 再读DR 可清除中断标识符
-    //     /// 注 不能用标准库自带的中断清理函数 USART_ClearFlag 此函数会直接向其写入零 而有些标识符为只读量只能通过对应操作修改
-    //     USART2->SR;
-    //     USART2->DR;
-    //     usart2_value.flag = 1;
-    //     /*
-    //     TODO 临时数据展示处理，通过 USART1 模块发送数据到 PC 串口调试助手
-    //     */
-    //     if (strstr(usart2_value.data, "led1"))
-    //     {
-    //         Led1_Toggle;
-    //         /* code */
-    //     }
-
-    //     Usart1_SendBuffer(usart2_value.data, usart2_value.count);
-    // }
 }
 
 /* ----------------------------------------------------------------------------

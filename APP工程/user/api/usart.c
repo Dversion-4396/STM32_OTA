@@ -351,37 +351,7 @@ void USART2_IRQHandler(void)
         usart2_value.data[usart2_value.count++] = data;
 
 
-        
-        // usart2_value.data[usart2_value.count++] = USART_ReceiveData(USART2);
-
-        // {
-        //     usart2_value.flag = 1;
-
-        //     /*
-        //     TODO 临时数据展示处理，通过 USART1 模块发送数据到 PC 串口调试助手
-        //     */
-        
-        // }
     }
-
-    // 此函数为获取指定中断状态
-
-    // {
-
-    
-    //     ////先读SR 再读DR 可清除中断标识符
-    //     /// 注 不能用标准库自带的中断清理函数 USART_ClearFlag 此函数会直接向其写入零 而有些标识符为只读量只能通过对应操作修改
-    //     USART2->SR;
-    //     USART2->DR;
-    //     usart2_value.flag = 1;
-    //     /*
-    //     TODO 临时数据展示处理，通过 USART1 模块发送数据到 PC 串口调试助手
-    //     */
-    //     {
-    //         /* code */
-    //     }
-
-    // }
 }
 
 /* ----------------------------------------------------------------------------

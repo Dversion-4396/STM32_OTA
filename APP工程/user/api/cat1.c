@@ -3,50 +3,58 @@
  * 说明：L511-2 4G 模块驱动实现
  * 负责：A（CAT1_ParseOTA 由 C 负责）
  *
- * ★完成顺序建议★：
- *   第 1 步：CAT1_GPIO_Init    ← 成品底板不需要，留空
- *   第 2 步：CAT1_PowerOn      ← 只等模块启动，不控 PWRKEY
- *   第 3 步：CAT1_SendAT       ← ★核心★ 已跑通
- *   第 4 步：CAT1_ActiveGPRS   ← ★核心★ 已跑通（拿到 IP 10.57.138.207）
- *   第 5 步：CAT1_HttpInit + CAT1_HttpRead
- *   第 6 步：CAT1_OTA（完整流程）
- *
+ *=====================================================================
  * ★★★ 当前进度（2026-10-27）★★★
- *   ✅ CAT1_SendAT      已实现并实测通过
- *   ✅ CAT1_ActiveGPRS  已实现并实测通过
- *     实测输出：
- *       [GPRS] SIM卡就绪
- *       [GPRS] 网络已注册
- *       [GPRS] IP: +CGPADDR: 1,"10.57.138.207"
- *       [GPRS] 成功
- *   ⏳ CAT1_PowerOn      待写（简单）
- *   ⏳ CAT1_HttpInit     待写（★先验证 AT+HTTPINIT 是否支持★）
- *   ⏳ CAT1_HttpRead     待写
+ *
+ *   ✅ CAT1_SendAT      已实现，实测通过
+ *   ✅ CAT1_ActiveGPRS  已实现，实测通过（拿到 IP）
+ *   ⏳ CAT1_PowerOn      待写（很简单，只等模块启动）
+ *   ⏳ CAT1_HttpInit     待写（★HTTP 方案待定，见下方硬件结论★）
+ *   ⏳ CAT1_HttpRead     待写（同上）
  *   ⏳ CAT1_OTA          待写
+ *   ⏳ CAT1_ParseOTA     待写（C 负责）
  *
  *=====================================================================
- * 2026-10-27 实测记录（串口助手 + USB-TTL）
+ * ★★★ 硬件实测结论（2026-10-27，最关键）★★★
  *
- * 硬件：L511-2 成品模块板（LCC 焊死 + NANO SIM 卡座 + DC-DC + 天线座）
- * 接线：DX-PJ14 USB-TTL 的 GND/TX/RX 接模块，115200 8N1
+ * 模块型号：LYNQ_L511C_2C
+ * 固件版本：L511C_2Cv02.01b07.00（2024/06/07）
  *
- * 实测通过：
+ * 【支持的指令】实测通过：
  *   AT                        → OK
- *   AT+ICCID                  → +ICCID: 898600501626fa367139  ← 移动号段
+ *   ATI                       → LYNQ_L511C_2C
+ *   AT+CGMR                   → L511C_2Cv02.01b07.00
+ *   AT+ICCID                  → +ICCID: 898600501626fa367139（移动号段）
  *   AT+CPIN?                  → +CPIN: READY
- *   AT+CSQ                    → +CSQ: 24,99                   ← 信号极好
- *   AT+CREG?                  → +CREG: 0,1                    ← 已注册
- *   AT+CGATT?                 → +CGATT: 1                     ← 已附着
+ *   AT+CSQ                    → +CSQ: 24,99（信号极好）
+ *   AT+CREG?                  → +CREG: 0,1（已注册）
+ *   AT+CGATT?                 → +CGATT: 1（已附着）
+ *   AT+CGACT?                 → +CGACT: 1,1（PDP 已激活）
  *   AT+CGDCONT=1,"IP","CMNET" → OK
  *   AT+CGACT=1,1              → OK
- *   AT+CGPADDR=1              → +CGPADDR: 1,"10.167.134.50"
+ *   AT+CGPADDR=1              → +CGPADDR: 1,"10.224.56.26"（有 IP）
  *
- * 实测失败：
+ * 【不支持的指令】实测返回 ERROR：
  *   AT+SAPBR=3,1,"Contype","GPRS"  → ERROR
  *   AT+SAPBR=3,1,"APN","CMNET"     → ERROR
  *   AT+SAPBR=1,1                   → ERROR
- *   AT+HTTPINIT                    → ERROR  ★待解决★
- *   AT+HTTPTERM                    → ERROR（正常，没初始化过就会报错）
+ *   AT+HTTPINIT                    → ERROR   ★★
+ *   AT+HTTPINIT=?                  → ERROR   ★★
+ *   AT+HTTPTERM                    → ERROR（这个正常，没初始化过就会报错）
+ *   AT+CIPSTART=?                  → ERROR（★不代表不支持，要实际连才知道★）
+ *
+ * ★★★ 结论：这块模块的固件【不支持标准 HTTP AT 指令】★★★
+ *
+ *   AT+HTTPINIT 和 AT+HTTPINIT=? 都返回 ERROR，
+ *   说明固件里根本没编译 HTTP 功能。
+ *
+ *   ★ 下一步必须验证 TCP（AT+CIPSTART）★
+ *     注意：AT+CIPSTART=? 返回 ERROR 不代表 TCP 不能用，
+ *           很多模块不支持 =? 查询形式，但实际能连。
+ *           必须发真实连接命令才知道。
+ *
+ *   如果 TCP 可用 → 改走 TCP 直连方案，手工拼 HTTP 报文
+ *   如果 TCP 也不可用 → 只能本地升级（Xmodem）或换模块
  *
  *=====================================================================
  * 三个实测踩过的坑
@@ -62,7 +70,7 @@
  *
  * 坑 3：PWRKEY 是"开关机切换"，不是"开机键"
  *       拉低 1.5 秒释放 = 开机；再拉低 1.5 秒释放 = 关机。
- *       所以 CAT1_PowerOn 必须先发 AT 探测，已开机就别再拉 PWRKEY。
+ *       本工程用的是成品底板（上电即工作），不需要控 PWRKEY。
  *
  *=====================================================================
  * 接 STM32 的接线（战神V1）
@@ -84,7 +92,6 @@
  *     模块发射瞬间要 1.2A，从开发板 5V 取电必须并联 470uF 电解电容，
  *     否则会把 STM32 的电压拉低导致复位。
  *=====================================================================*/
-
 #include "cat1.h"
 
 

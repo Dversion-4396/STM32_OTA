@@ -1,10 +1,54 @@
 ﻿/*=====================================================================
  * 文件：main.c
  * 说明：APP 主程序（OTA 客户端）
- * 负责：D（主循环整合），A/C 各自往 ActiveEvent 里加逻辑
+ * 负责：D（主循环整合）
  *
- * ★初始化顺序很重要，不要随便调★
+ *=====================================================================
+ * ★ 当前阶段（2026-10-27）★
+ *
+ * 这是【框架版】，只保留初始化骨架和主循环。
+ * 各人的业务逻辑写到自己的函数里，由 ActiveEvent 调用。
+ *
+ * 已完成并实测通过（A）：
+ *   CAT1_SendAT       AT 指令收发
+ *   CAT1_ActiveGPRS   GPRS 激活，拿到 IP
+ *
+ * 待实现：
+ *   A：CAT1_HttpInit / CAT1_HttpRead / CAT1_OTA
+ *   C：MQTT 连接巴法云 / CAT1_ParseOTA
+ *   D：SPI Flash 驱动 / 本文件集成
+ *   B：BootLoader 搬移（在 BootLoader 工程里）
+ *
+ *=====================================================================
+ * ★ 硬件实测结论（2026-10-27）★
+ *
+ * 模块型号：LYNQ_L511C_2C
+ * 固件版本：L511C_2Cv02.01b07.00（2024/06/07）
+ *
+ * 支持的 AT 指令（实测通过）：
+ *   AT / ATI / AT+CGMR / AT+CPIN? / AT+CSQ / AT+CREG?
+ *   AT+CGATT / AT+CGACT / AT+CGDCONT / AT+CGPADDR
+ *
+ * 【不支持】的 AT 指令：
+ *   AT+HTTPINIT      → ERROR
+ *   AT+HTTPINIT=?    → ERROR
+ *
+ * ★ 这意味着标准 HTTP OTA 方案走不通 ★
+ *   下一步要验证 TCP（AT+CIPSTART）是否可用：
+ *     能用 → 改走 TCP 直连，手工拼 HTTP 报文
+ *     不能用 → 只能本地升级（Xmodem）或换模块
+ *
+ *=====================================================================
+ * ★ 初始化顺序（不要随便调）★
+ *
+ *   1. USART1（调试口，9600）  ← 必须最先，后面才能打印
+ *   2. USART3（4G 模块，115200）
+ *   3. 等 4G 模块启动（10~15 秒）
+ *   4. 激活 GPRS
+ *   5. 各模块初始化（EEPROM / SPI Flash / MQTT）
+ *   6. 进入主循环
  *====================================================================*/
+
 #include "common.h"
 #include "usart.h"
 #include "delay.h"
@@ -28,6 +72,81 @@ u32 ConnectTimer = 0;          /* 连上服务器后的计时（秒） */
 u32 PingTimer = 0;             /* 上次发 PING 的时间（秒） */
 
 /*=====================================================================
+ * 函数：U3_EventDispatch
+ * 功能：USART3（4G）收到数据后的事件分发
+ * 参数：data - 收到的数据；len - 长度
+ * 返回：无
+ * 负责：D
+ *
+ * 4G 回来的数据分两种：
+ *   ① MQTT 报文（首字节是 MQTT 固定头）
+ *       0x20 CONNACK / 0x30 PUBLISH / 0x40 PUBACK
+ *       0x90 SUBACK  / 0xD0 PINGRESP
+ *      → 交给 U2PassiveEvent 处理
+ *
+ *   ② AT 指令应答（文本，如 "OK" / "+CPIN: READY"）
+ *      → 由 CAT1_SendAT 内部处理，这里不用管
+ *
+ * ★ 实现要点 ★
+ *   if (len > 0 && (data[0] == 0x20 || data[0] == 0x30 ||
+ *                   data[0] == 0x40 || data[0] == 0x90 ||
+ *                   data[0] == 0xD0))
+ *   {
+ *       U2PassiveEvent(data, len);
+ *   }
+ *====================================================================*/
+void U3_EventDispatch(u8 *data, u16 len)
+{
+    /* TODO【D】：实现 */
+
+    /* 临时屏蔽未使用参数警告 */
+    (void)data;
+    (void)len;
+}
+
+/*=====================================================================
+ * 函数：ActiveEvent
+ * 功能：主动事件处理（主循环里循环调用）
+ * 参数：无
+ * 返回：无
+ * 负责：A + C 各自往这里加
+ *
+ * 工作机制：
+ *   中断或被动事件里置 SysEventFlag 的某一位，
+ *   主循环调本函数，看到标志就执行对应动作。
+ *
+ *   为什么这样设计：
+ *     中断里不能做耗时操作（会丢数据），
+ *     所以中断只置标志，真正的处理放主循环。
+ *====================================================================*/
+void ActiveEvent(void)
+{
+    /*---------- TODO【A】：处理 OTA 下载事件 ----------*/
+    /*
+    if (SysEventFlag & OTA_EVENT)
+    {
+        SysEventFlag &= ~OTA_EVENT;
+
+        if (CAT1_OTA(URL_ABuff, BemfaInfoCB.OTA_firelen) == 0)
+        {
+            BemfaInfoCB.OTA_flag = BOOT_STA_O;
+            EEPROM_SaveInfo();
+        }
+        NVIC_SystemReset();
+    }
+    */
+
+    /*---------- TODO【C】：处理连接服务器事件 ----------*/
+    /*
+    if (SysEventFlag & CONNECT_START)
+    {
+        SysEventFlag &= ~CONNECT_START;
+        MQTT_ConnectBemfa();
+    }
+    */
+}
+
+/*=====================================================================
  * 函数：main
  * 功能：程序入口
  * 参数：无
@@ -36,173 +155,70 @@ u32 PingTimer = 0;             /* 上次发 PING 的时间（秒） */
  *====================================================================*/
 int main(void)
 {
-    u8 ret;
-    u16 i;
-
-    /*---------- 1. 初始化调试串口 USART1 ----------*/
+    /*---------- 1. 初始化调试串口（必须最先）----------*/
     Usart1_Init(USART1_BRR);
-    Usart1_SendString("\r\n\r\n=== STM32 启动 ===\r\n");
+    Usart1_SendString("\r\n\r\n");
+    Usart1_SendString("=== STM32 OTA 启动 ===\r\n");
 
-    /*---------- 2. 初始化 4G 串口 USART3 ----------*/
+    /*---------- 2. 初始化 4G 模块串口 ----------*/
     Usart3_Init(USART3_BRR);
     Usart1_SendString("USART3 初始化完成\r\n");
 
     /*---------- 3. 等 4G 模块启动 ----------*/
     /* 模块上电后要 10~15 秒才能响应 AT，太早发没反应 */
-    Usart1_SendString("等待 4G 模块启动5秒...\r\n");
-    delay_ms(5000);
+    Usart1_SendString("等待 4G 模块启动...\r\n");
+    delay_ms(10000);
 
-    /*---------- 4. 测试 AT ----------*/
-    Usart1_SendString("发送 AT ...\r\n");
-    ret = CAT1_SendAT("AT", "OK", 3000);
-
-    if (ret == 0)
+    /*---------- 4. 激活 GPRS ----------*/
+    /* 内部已有详细打印，失败会打印步骤号 */
+    if (CAT1_ActiveGPRS() != 0)
     {
-        Usart1_SendString("AT 成功\r\n");
-        /* 打印模块返回的原始数据 */
-        Usart1_SendString("模块返回: [");
-        Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-        Usart1_SendString("]\r\n");
-    }
-    else
-    {
-        Usart1_SendString("AT 失败\r\n");
-        Usart1_SendString("收到字节数: ");
-        /* 手动打印数字 */
-        {
-            char num[8];
-            sprintf(num, "%u", usart3_value.count);
-            Usart1_SendString(num);
-        }
-        Usart1_SendString("\r\n");
-        Usart1_SendString("原始数据: [");
-        Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-        Usart1_SendString("]\r\n");
-        Usart1_SendString("flag=");
-        {
-            char num[4];
-            sprintf(num, "%u", usart3_value.flag);
-            Usart1_SendString(num);
-        }
-        Usart1_SendString("\r\n");
-    }
-    /*---------- 5. 激活 GPRS（内部已有详细打印）----------*/
-    ret = CAT1_ActiveGPRS();
-    if (ret != 0)
-    {
-        Usart1_SendString("[GPRS] 失败，步骤=");
-        {
-            char num[4];
-            sprintf(num, "%u", ret);
-            Usart1_SendString(num);
-        }
-        Usart1_SendString("\r\n");
-    }
-    /*=================================================================
-     * HTTP 功能诊断（A 负责）
-     *
-     * 目的：确认这块 L511-2 到底支不支持 HTTP
-     *       决定后面走 HTTP 方案还是 TCP 直连方案
-     *
-     * 诊断顺序（每步都要看返回）：
-     *   ① AT+CGATT?        确认 GPRS 已附着
-     *   ② AT+CGACT?        确认 PDP 已激活
-     *   ③ AT+CGPADDR=1     确认有 IP
-     *   ④ AT+HTTPTERM      清残留（返回 ERROR 正常）
-     *   ⑤ AT+HTTPINIT      核心测试
-     *   ⑥ AT+HTTPINIT=?    如果 ⑤ 失败，看支持哪些子命令
-     *   ⑦ AT+CIPSTART=?    如果 HTTP 不支持，看 TCP 支持哪些参数
-     *=================================================================*/
-
-    Usart1_SendString("\r\n");
-    Usart1_SendString("========================================\r\n");
-    Usart1_SendString("  HTTP 功能诊断\r\n");
-    Usart1_SendString("========================================\r\n");
-
-    /*---------- ① 确认 GPRS 附着 ----------*/
-    Usart1_SendString("[1] AT+CGATT?\r\n");
-    ret = CAT1_SendAT("AT+CGATT?", "OK", 3000);
-    Usart1_SendString("    返回: [");
-    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-    Usart1_SendString("]\r\n\r\n");
-
-    /*---------- ② 确认 PDP 激活 ----------*/
-    Usart1_SendString("[2] AT+CGACT?\r\n");
-    ret = CAT1_SendAT("AT+CGACT?", "OK", 3000);
-    Usart1_SendString("    返回: [");
-    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-    Usart1_SendString("]\r\n\r\n");
-
-    /*---------- ③ 确认有 IP ----------*/
-    Usart1_SendString("[3] AT+CGPADDR=1\r\n");
-    ret = CAT1_SendAT("AT+CGPADDR=1", "OK", 5000);
-    Usart1_SendString("    返回: [");
-    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-    Usart1_SendString("]\r\n\r\n");
-
-    /*---------- ④ 清残留（返回 ERROR 正常）----------*/
-    Usart1_SendString("[4] AT+HTTPTERM（清残留，ERROR 正常）\r\n");
-    CAT1_SendAT("AT+HTTPTERM", "OK", 3000);
-    Usart1_SendString("    返回: [");
-    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-    Usart1_SendString("]\r\n\r\n");
-    delay_ms(500);
-
-    /*---------- ⑤ 核心测试：HTTPINIT ----------*/
-    Usart1_SendString("[5] AT+HTTPINIT  ★核心测试★\r\n");
-    ret = CAT1_SendAT("AT+HTTPINIT", "OK", 5000);
-    Usart1_SendString("    返回: [");
-    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-    Usart1_SendString("]\r\n");
-
-    if (ret == 0)
-    {
-        Usart1_SendString("    ★★★ HTTPINIT 成功！HTTP 方案可行 ★★★\r\n");
-        Usart1_SendString("    下一步：写 CAT1_HttpInit / CAT1_HttpRead\r\n");
-        /* 测试完记得 TERM 掉，否则会占用资源 */
-        CAT1_SendAT("AT+HTTPTERM", "OK", 3000);
-    }
-    else
-    {
-        Usart1_SendString("    ★ HTTPINIT 失败\r\n");
-        Usart1_SendString("    继续诊断看模块支持什么...\r\n\r\n");
-
-        /*---------- ⑥ 查 HTTP 支持哪些子命令 ----------*/
-        Usart1_SendString("[6] AT+HTTPINIT=?（查支持哪些 HTTP 子命令）\r\n");
-        ret = CAT1_SendAT("AT+HTTPINIT=?", "OK", 3000);
-        Usart1_SendString("    返回: [");
-        Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-        Usart1_SendString("]\r\n");
-        Usart1_SendString("    如果这里也是 ERROR，说明模块根本不支持 HTTP\r\n\r\n");
-
-        /*---------- ⑦ 查 TCP 支持哪些参数 ----------*/
-        Usart1_SendString("[7] AT+CIPSTART=?（查 TCP 支持）\r\n");
-        ret = CAT1_SendAT("AT+CIPSTART=?", "OK", 3000);
-        Usart1_SendString("    返回: [");
-        Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-        Usart1_SendString("]\r\n");
-        Usart1_SendString("    如果这里 OK，说明 TCP 可用，改走 TCP 直连方案\r\n\r\n");
+        Usart1_SendString("GPRS 激活失败，检查 SIM 卡和信号\r\n");
     }
 
-    /*---------- ⑧ 看模块型号和固件版本 ----------*/
-    Usart1_SendString("[8] ATI（模块型号）\r\n");
-    CAT1_SendAT("ATI", "OK", 3000);
-    Usart1_SendString("    返回: [");
-    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-    Usart1_SendString("]\r\n\r\n");
+    /*---------- 5. 各模块初始化 ----------*/
+    /* TODO【D】：EEPROM 和 SPI Flash 初始化 */
+    /*
+    if (EEPROM_ReadInfo() != 0)
+    {
+        Usart1_SendString("EEPROM 读取失败\r\n");
+    }
+    if (W25Q128_Init() != 0)
+    {
+        Usart1_SendString("W25Q128 初始化失败\r\n");
+    }
+    */
 
-    Usart1_SendString("[9] AT+CGMR（固件版本）\r\n");
-    CAT1_SendAT("AT+CGMR", "OK", 3000);
-    Usart1_SendString("    返回: [");
-    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-    Usart1_SendString("]\r\n\r\n");
-
-    Usart1_SendString("========================================\r\n");
-    Usart1_SendString("  诊断结束\r\n");
-    Usart1_SendString("========================================\r\n");
     /*---------- 6. 主循环 ----------*/
+    Usart1_SendString("进入主循环\r\n");
+
     while (1)
     {
-        delay_ms(1000);
+        /* TODO【D】：处理 4G 收到的数据 */
+        /*
+        if (usart3_value.flag)
+        {
+            usart3_value.flag = 0;
+            U3_EventDispatch(usart3_value.data, usart3_value.count);
+        }
+        */
+
+        /* 处理主动事件（OTA 下载 / MQTT 连接等） */
+        ActiveEvent();
+
+        /* TODO【C】：MQTT 心跳保活 */
+        /*
+        if (SysEventFlag & CONNECT_EVENT)
+        {
+            ConnectTimer++;
+            if (ConnectTimer - PingTimer >= 30)
+            {
+                PingTimer = ConnectTimer;
+                MQTT_PingREQ();
+            }
+        }
+        */
+
+        delay_ms(10);
     }
 }
