@@ -1,0 +1,63 @@
+======================================================================
+战神V1 + L511-2 OTA 代码框架 最终检查报告
+======================================================================
+
+【APP工程】
+  api 目录文件数: 39
+    OK  spi.c
+    OK  cat1.c
+    OK  mqtt.c
+
+【BootLoader工程】
+  api 目录文件数: 23
+    OK  spi.c
+    OK  stmflash.c
+    OK  boot.c
+    已删除  oled.c
+    已删除  gif_frames.c
+    已删除  dht11.c
+    已删除  modbus.c
+    已删除  mqtt.c
+
+【Keil 工程配置】
+  APP: IROM1 Start=0x8008000 Size=0x78000  工程内文件=46
+  BootLoader: IROM1 Start=0x8000000 Size=0x8000  工程内文件=37
+
+【向量表偏移】
+  APP: VECT_TAB_OFFSET = 0x8000
+  BootLoader: VECT_TAB_OFFSET = 0x0
+
+【USART3 接收缓冲】
+  APP: 1024 字节  （已改为1024）
+  BootLoader: 1024 字节  （已改为1024）
+
+【common.h 两工程一致性】
+  AliyunInfo_CB 结构体: 一致 OK
+  分区宏: 一致 OK
+    FLASH_BOOT_PAGE_NUM = 16                /* BootLoader 鍗� 16 椤� */
+    FLASH_A_ADDR = (FLASH_BASE_ADDR + FLASH_BOOT_SIZE)       /* 0x08008000 */
+    FLASH_A_PAGE_NUM = 240
+
+【TODO 分布（每人任务量）】
+  A: 9 个 TODO
+      main.c(2), cat1.c(7)
+  B: 24 个 TODO
+      main.c(7), boot.c(11), stmflash.c(6)
+  C: 14 个 TODO
+      main.c(2), cat1.c(1), mqtt.c(11)
+  D: 29 个 TODO
+      main.c(5), spi.c(12), spi.c(12)
+
+【关键文件清单】
+  APP:
+    common.h: 150 行
+    main.c: 123 行
+    spi.c: 212 行
+    spi.h: 153 行
+  BL:
+    common.h: 150 行
+    main.c: 76 行
+    spi.c: 212 行
+    spi.h: 153 行
+
+======================================================================

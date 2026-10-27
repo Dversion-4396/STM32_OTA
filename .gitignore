@@ -1,0 +1,63 @@
+# ============================================================
+# STM32 OTA 项目 - Git 忽略规则
+# ============================================================
+
+# ---------- Keil 编译产物 ----------
+*.o
+*.d
+*.crf
+*.axf
+*.hex
+*.bin
+*.elf
+*.map
+*.lst
+*.lnp
+*.dep
+*.htm
+*.sct
+*.build_log.htm
+*.iex
+*.tra
+*.__i
+*._ia
+*.__i
+*.bak
+*.tmp
+
+# ---------- Keil 用户配置（每台机器不同）----------
+*.uvguix.*
+*.uvoptx
+JLinkLog.txt
+JLinkSettings.ini
+
+# ---------- 编译输出目录 ----------
+Objects/
+Listings/
+DebugConfig/
+Release/
+Debug/
+build/
+output/
+
+# ---------- 编辑器 / 系统 ----------
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 备份与压缩 ----------
+*.rar
+*.zip
+*.7z
+*_backup/
+backup/
+
+# ---------- 临时文件 ----------
+*.log
+*.err
+_temp/
+tmp/

@@ -1,0 +1,14 @@
+# 换行风格固定为 LF。
+# 为什么要写这个：git 默认的 core.autocrlf 会在提交/检出时自动把换行
+# 从 LF 改成 CRLF（或反过来），对 Keil 工程来说这是没必要的意外改动。
+# 钉死之后，仓库里存的就是文件真实的内容，checkout 出来也不会变形。
+* text=auto eol=lf
+
+# 明确按二进制处理，不做任何换行转换
+*.hex   binary
+*.axf   binary
+*.o     binary
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.xlsx  binary
