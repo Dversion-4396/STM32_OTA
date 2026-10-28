@@ -74,18 +74,42 @@ MQTT_CB Bemfa_mqtt;
  *====================================================================*/
 void MQTT_Init(void)
 {
-    /* TODO【C】：实现 */
-    // ClientID
-    sprintf(Bemfa_mqtt.ClientID,"client");
-    // username 
-    sprintf(Bemfa_mqtt.Username,USERNAME_KEY);
-    // password 
-    sprintf(Bemfa_mqtt.Passward,USERNAME_KEY);
-    // Server IP 
-    sprintf(Bemfa_mqtt.ServerIP,SERVER_IP);
-    // Serrver Port
+    /*=================================================================
+     * 功能：初始化 MQTT 连接参数（ClientID / 用户名 / 密码 / 服务器 / Topic）
+     *
+     * ★ 巴法云的关键规则（官方文档"MQTT协议接入"）★
+     *
+     *   方式一：把【私钥】直接当 ClientID，用户名/密码随便填甚至留空
+     *           —— 不需要额外认证，最省事
+     *
+     *   方式二：如果 ClientID 不是私钥，服务器改用
+     *           username=appID、password=secretKey 认证
+     *
+     *   ★ C 在测试工程里踩过这个坑 ★
+     *     ClientID 写 "client"，触发方式二，但用户名填的是私钥不是 appID，
+     *     服务器回 CONNACK 0x05（未授权）。
+     *     改成方式一（ClientID = 私钥）就通了。
+     *
+     *=================================================================
+     * 本实现：ClientID / Username / Password 全部填私钥（方式一）
+     *================================================================*/
+    sprintf(Bemfa_mqtt.ClientID,  USERNAME_KEY);
+    sprintf(Bemfa_mqtt.Username,  USERNAME_KEY);
+    sprintf(Bemfa_mqtt.Passward,  USERNAME_KEY);
+
+    sprintf(Bemfa_mqtt.ServerIP,  SERVER_IP);
     Bemfa_mqtt.ServerPort = SERVER_PORT;
-    // 订阅 Topic 
+
+    /*---------- 订阅 Topic ----------
+     * 巴法云控制台里创建的主题，直接用名字，不需要拼 UID 后缀。
+     *
+     * ★ 注意：这里的 "123" 和 "qwe" 是 C 测试时用的临时主题名 ★
+     *   正式版应该从 EEPROM 的 BemfaInfoCB.Topic_Buff 读，
+     *   或者按 OTA 需求拼成 "ota{uid}"。
+     *----------------------------------------------------------------*/
+    strcpy(Bemfa_mqtt.Stopic_Buff[0], "123");
+    strcpy(Bemfa_mqtt.Stopic_Buff[1], "qwe");
+    strcpy(Bemfa_mqtt.Stopic_Buff[2], "");
 }
 
 /*=====================================================================
@@ -116,82 +140,125 @@ void MQTT_Init(void)
  *====================================================================*/
 u8 MQTT_ConnectBemfa(void)
 {
-    /* TODO【C】：实现 */
-    // 1. 初始化设备
-	Usart1_Init(USART1_BRR);
-	Usart3_Init(USART3_BRR);
-	
-	/*
-	进入 WiFi 模块操作，需要发送 AT 指令
-	*/
-	
-	// 1. 发送 "AT\r\n" 到 WiFi 模块
-	Usart3_SendString("AT\r\n");
-	/*
-	在每一条 AT 指令之间，需要预留一定的延时，满足 WiFi 模块对 AT 指令处理
-	和响应所需必要时间。通常情况下时间 2 ~ 5 秒
-	*/
-	delay_ms(2000);
-	
-	// 2. 设置当前 WiFi 模块对应的工作模式为 STA 模式
-	/*
-	AT+CWMODE 设置当前 WiFi 模块对应工作模式
-		1. AT+CWMODE 已淘汰，但是可以使用
-		2. AT+CWMODE_CUE 设置当前 WiFi 工作模式，不储存到 Flash 下次启动
-			无记录，需要重新配置
-		3. AT+CWMODE_DEF 设置当前 WiFi 工作模式，存储到 Flash 下次启动直
-			接使用当前配置
-	*/
-	Usart3_SendString("AT+CWMODE_CUR=1\r\n");
-	delay_ms(2000);
-	
-	/*
-	3. 扫描当前可用 AP 热点信息
-	*/
-	Usart3_SendString("AT+CWLAP\r\n");
-	delay_ms(3000);
-	
-	/*
-	4. 连接目标热点，需要提供
-		1. 热点对应 SSID
-		2. 热点对应 密码
-		3. 【重点】当前 AP 热点必须是 2.4 GHz 频段。
-	要求提供的 AT 指令为
-		AT+CWJAP="你的WiFi名称","你的WiFi密码"
-		要求 WiFi 名称和对应密码必须在 AT 指令中是字符串形式，
-		因为本身 AT 指令就是字符串形式，需要提供转移字符进行处理
-	*/
-	char at_cmd[64] = "";
-	sprintf(at_cmd,"AT+CWJAP=\"%s\",\"%s\"\r\n",AP_SSID,AP_PSK);
-	Usart3_SendBuffer(at_cmd,strlen(at_cmd));
-	
-	delay_ms(10000);
-	
-	/*
-	5. 发送 AT + CIFSR 到 WiFi 模块查看当前连接网络情况
-	*/
-	Usart3_SendString("AT+CIFSR\r\n");
-	delay_ms(3000);
+    /*=================================================================
+     * 功能：连接巴法云 MQTT 服务器
+     *
+     * 返回：0 = 成功（CONNECT 报文已发出）
+     *       1 = 配置 APN 失败
+     *       2 = 激活 PDP 失败
+     *       3 = TCP 连接失败
+     *
+     *=================================================================
+     * ★★★ 重要说明 ★★★
+     *
+     * 这个函数原来是从 C 的 WiFi 测试工程复制过来的，
+     * 里面全是 ESP8266 的指令（AT+CWMODE / AT+CWJAP / AT+CIPMODE）。
+     *
+     * 本工程用的是【移柯 L511C-2C 4G 模块】，完全不认那些 WiFi 指令。
+     * 所以 WiFi 版本的代码已经用 #if 0 屏蔽掉了（见下方），
+     * 保留是为了参考 MQTT 报文发送的时序。
+     *
+     * 现在的实现按 CT511 手册（docs/CT511_AT指令手册_提取.md）走 4G 流程。
+     *
+     *=================================================================
+     * ★ 待确认 ★
+     *
+     * CT511 的 AT+CIPOPEN 具体行为还没实测：
+     *   - 是透传模式（发了数据直接进 TCP）
+     *   - 还是 AT 模式（还要 AT+CIPSEND 指定长度）
+     *
+     * 如果是透传模式，本函数末尾直接发 CONNECT 报文即可；
+     * 如果是 AT 模式，要在 MQTT_ConectPack 之前加 AT+CIPSEND。
+     *
+     * ★ 请 C 先做这个测试 ★
+     *   AT+CIPOPEN=0,"TCP","bemfa.com",9501
+     *   看返回是 OK + +CIPOPEN: 0,0（成功）还是 ERROR
+     *================================================================*/
 
-    memset(at_cmd,0,64);
-	sprintf(at_cmd,"AT+CIPSTART=\"TCP\",\"%s\",%d\r\n",MQTT_SERVER_IP_ADDR,MQTT_SERVER_PORT);
-	Usart3_SendBuffer(at_cmd,strlen(at_cmd));
-	delay_ms(2000);
+#if 0
+    /*------------------------------------------------------------------
+     * 【已废弃】WiFi 版本（ESP8266）
+     *
+     * 这段是从 C 的 WiFi 测试工程（E:\桌面\STM32F103ZET6_MQTTceshi）
+     * 复制过来的原始代码，在 WiFi 模块上实测能跑通。
+     *
+     * 但本工程用的是 4G 模块，这些指令全部无效，所以屏蔽掉。
+     * 保留作为参考：可以看 MQTT 报文发送的时序安排。
+     *------------------------------------------------------------------*/
+    {
+        char at_cmd[64] = "";
 
-    Usart3_SendString("AT+CIPMODE=1\r\n");
-	delay_ms(2000);
-	
-	Usart3_SendString("AT+CIPSEND\r\n");
-	delay_ms(2000);
-	
-	/*
-	需要在透传模式开启工作之后，发送 MQTT 数据包，此时 WiFi 模块会直接将所有的数据内容
-	直接发送到——连接的 TCP 远端服务。
-	*/
-    MQTT_ConectPack();
-	
-	delay_ms(2000);
-    return 1;
+        Usart1_Init(USART1_BRR);
+        Usart3_Init(USART3_BRR);
+
+        Usart3_SendString("AT\r\n");
+        delay_ms(2000);
+
+        Usart3_SendString("AT+CWMODE_CUR=1\r\n");       /* WiFi STA 模式 */
+        delay_ms(2000);
+
+        Usart3_SendString("AT+CWLAP\r\n");              /* 扫描热点 */
+        delay_ms(3000);
+
+        sprintf(at_cmd, "AT+CWJAP=\"%s\",\"%s\"\r\n", AP_SSID, AP_PSK);
+        Usart3_SendBuffer(at_cmd, strlen(at_cmd));      /* 连 WiFi */
+        delay_ms(10000);
+
+        Usart3_SendString("AT+CIFSR\r\n");              /* 查 IP */
+        delay_ms(3000);
+
+        memset(at_cmd, 0, 64);
+        sprintf(at_cmd, "AT+CIPSTART=\"TCP\",\"%s\",%d\r\n",
+                MQTT_SERVER_IP_ADDR, MQTT_SERVER_PORT);
+        Usart3_SendBuffer(at_cmd, strlen(at_cmd));
+        delay_ms(2000);
+
+        Usart3_SendString("AT+CIPMODE=1\r\n");          /* 透传模式 */
+        delay_ms(2000);
+
+        Usart3_SendString("AT+CIPSEND\r\n");            /* 进透传 */
+        delay_ms(2000);
+
+        MQTT_ConectPack();
+
+        delay_ms(2000);
+        return 1;
+    }
+#endif
+
+    /*==================================================================
+     * 【待实现】4G 版本的连接流程
+     *
+     * ★★★ 为什么这里是空的 ★★★
+     *
+     * 下面 #if 0 里的 WiFi 版本是 C 在 ESP8266 上实测跑通的，
+     * 但 4G 模块（移柯 L511C-2C）的 TCP 连接指令还没验证过。
+     *
+     * 按 docs/CT511_AT指令手册_提取.md 推测流程是：
+     *   ① AT+QICSGP=1,1,"CMNET","","",1    配置 APN   ← 已实测 OK
+     *   ② AT+QIACT=1                       激活 PDP   ← 已实测 OK
+     *   ③ AT+CIPOPEN=0,"TCP","bemfa.com",9501   建 TCP  ← ★未验证★
+     *   ④ 发 CONNECT 报文（透传 or 需要 CIPSEND，未知）
+     *   ⑤ 订阅 Topic
+     *
+     * ★ 需要 C 先做这个测试再写代码 ★
+     *
+     *   AT+CIPOPEN=0,"TCP","bemfa.com",9501
+     *
+     *   看返回是：
+     *     OK + +CIPOPEN: 0,0   → 成功，可以继续
+     *     ERROR                → 指令不对，要换别的
+     *
+     *   同时要确认：CIPOPEN 之后是透传模式（数据直接进 TCP），
+     *   还是 AT 模式（还要 AT+CIPSEND=<len> 指定长度）。
+     *
+     * 测通之后再按实际结果填这个函数。
+     *==================================================================*/
+
+    /* TODO【C】：等 AT+CIPOPEN 实测通过后实现 */
+
+    Usart1_SendString("[MQTT] 连接功能待实现\r\n");
+    return 9;
 }
 
 /*=====================================================================
@@ -203,7 +270,17 @@ u8 MQTT_ConnectBemfa(void)
  *=====================================================================*/
 void MQTT_ConectPack(void)
 {
-    /* TODO【C】：从 36 号工程移植 */
+    /*=================================================================
+     * 功能：组装并发送 MQTT CONNECT 报文
+     *
+     * 来源：从 36 号工程移植（C 在 WiFi 测试工程里实测跑通）
+     *
+     * CONNECT 报文结构：
+     *   固定头：0x10 + 剩余长度
+     *   可变头：00 04 4D 51 54 54 04 C2 00 64
+     *           协议名 MQTT / 协议级别 4 / 连接标志 C2 / KeepAlive 100s
+     *   载荷：  ClientID + Username + Password
+     *================================================================*/
     int temp;              //计算报文剩余长度时，使用的临时变量              
 	int Remaining_len;     //保存报文剩余长度字节 
 	
@@ -257,7 +334,66 @@ void MQTT_ConectPack(void)
  *=====================================================================*/
 void MQTT_Subscribe(char topics[][TOPIC_SIZE], int num, int qos)
 {
-    /* TODO【C】：从 36 号工程移植 */
+    /*=================================================================
+     * 功能：组装并发送 SUBSCRIBE 报文（订阅多个 Topic）
+     *
+     * 来源：从 C 的 MQTT 测试工程移植（E:\桌面\STM32F103ZET6_MQTTceshi）
+     *       实测在巴法云上能正常订阅
+     *
+     * MQTT SUBSCRIBE 报文结构：
+     *   固定头：0x82 + 剩余长度
+     *           高4位 1000 = SUBSCRIBE（必须是 0x82，低4位固定 0010）
+     *   可变头：报文标识符（2 字节，大端）
+     *   载荷：  每个 Topic 三部分
+     *             Topic 长度（2 字节大端）
+     *             Topic 内容
+     *             QoS（1 字节）
+     *
+     * ★ 为什么用 static 数组 ★
+     *   512 字节放栈上会吃掉一大块 RAM（本工程只有 64KB），
+     *   而且这个函数不会重入（裸机单线程），用 static 放 .bss 最省。
+     *
+     * ★ 限制：剩余长度只支持单字节（报文 < 128 字节）★
+     *   当前 2 个短 Topic 够用。如果以后 Topic 变长要改多字节编码。
+     *================================================================*/
+    static u8 pack[MQTT_PACKAGE_SIZE];
+    u16 pos = 0;
+    u16 remaining = 2;      /* 报文标识符占 2 字节 */
+    u16 tlen;
+    int i;
+
+    if (num <= 0) return;
+
+    /* 算总长度：每个 Topic = 2(长度) + 内容 + 1(QoS) */
+    for (i = 0; i < num; i++)
+    {
+        remaining += 2 + strlen(topics[i]) + 1;
+    }
+
+    /* 本实现只处理单字节剩余长度 */
+    if (remaining > 127) return;
+    if ((2 + remaining) > MQTT_PACKAGE_SIZE) return;
+
+    /* 固定头 */
+    pack[pos++] = 0x82;
+    pack[pos++] = (u8)remaining;
+
+    /* 报文标识符（随便给一个，SUBACK 会原样返回） */
+    pack[pos++] = 0x00;
+    pack[pos++] = 0x0B;     /* = 11 */
+
+    /* 载荷：逐个 Topic */
+    for (i = 0; i < num; i++)
+    {
+        tlen = strlen(topics[i]);
+        pack[pos++] = tlen >> 8;        /* 长度高字节 */
+        pack[pos++] = tlen & 0x00FF;    /* 长度低字节 */
+        memcpy(pack + pos, topics[i], tlen);
+        pos += tlen;
+        pack[pos++] = (u8)qos;
+    }
+
+    Usart3_SendBuffer(pack, pos);
 }
 
 /*=====================================================================
@@ -266,7 +402,46 @@ void MQTT_Subscribe(char topics[][TOPIC_SIZE], int num, int qos)
  *=====================================================================*/
 void MQTT_PublishQs0(char *topic, char *data, int len)
 {
-    /* TODO【C】：从 36 号工程移植 */
+    /*=================================================================
+     * 功能：组装并发送 PUBLISH 报文（QoS 0，最多一次）
+     *
+     * 来源：从 C 的 MQTT 测试工程移植
+     *
+     * MQTT PUBLISH 报文结构（QoS0 没有报文标识符）：
+     *   固定头：0x30 + 剩余长度
+     *           高4位 0011 = PUBLISH，低4位 0000 = QoS0
+     *   可变头：Topic 长度（2 字节大端）+ Topic 内容
+     *   载荷：  实际数据（原样塞进去）
+     *
+     * ★ QoS0 的特点 ★
+     *   发出去就不管了，服务器不回 PUBACK。
+     *   适合：传感器数据上报、心跳、版本上报
+     *   不适合：OTA 命令下发（丢了就没了）
+     *================================================================*/
+    static u8 pack[MQTT_PACKAGE_SIZE];
+    u16 pos = 0;
+    u16 topic_len = (u16)strlen(topic);
+    u16 remaining = 2 + topic_len + (u16)len;
+
+    /* 本实现只处理单字节剩余长度 */
+    if (remaining > 127) return;
+    if ((2 + remaining) > MQTT_PACKAGE_SIZE) return;
+
+    /* 固定头 */
+    pack[pos++] = 0x30;
+    pack[pos++] = (u8)remaining;
+
+    /* 可变头：Topic */
+    pack[pos++] = (u8)(topic_len >> 8);
+    pack[pos++] = (u8)(topic_len & 0x00FF);
+    memcpy(pack + pos, topic, topic_len);
+    pos += topic_len;
+
+    /* 载荷 */
+    memcpy(pack + pos, data, len);
+    pos += len;
+
+    Usart3_SendBuffer(pack, pos);
 }
 
 /*=====================================================================
@@ -275,7 +450,34 @@ void MQTT_PublishQs0(char *topic, char *data, int len)
  *=====================================================================*/
 void MQTT_PublishQs1(char *topic, char *data, int len)
 {
-    /* TODO【C】：从 36 号工程移植 */
+    /*=================================================================
+     * 功能：组装并发送 PUBLISH 报文（QoS 1，至少一次）
+     *
+     * ★ 待实现 ★
+     *
+     * C 的测试工程里这个函数也是空的（只在 #if 0 里有个空壳），
+     * 所以没有实测过的代码可以搬。
+     *
+     * 实现时的参考（MQTT 3.1.1 协议）：
+     *   固定头：0x32 + 剩余长度
+     *           高4位 0011 = PUBLISH，低4位 0010 = QoS1
+     *   可变头：Topic 长度（2 字节）+ Topic + 报文标识符（2 字节）
+     *   载荷：  实际数据
+     *
+     * QoS1 和 QoS0 的区别就是多了 2 字节报文标识符，
+     * 固定头从 0x30 变成 0x32。
+     * 可以参考 MQTT_PublishQs0 的实现来写。
+     *
+     * ★ 当前项目用 QoS0 就够了 ★
+     *   巴法云下发 OTA 命令用 QoS0 也能收到，
+     *   所以这个函数可以先空着。
+     *================================================================*/
+    /* TODO【C】：需要时参考 MQTT_PublishQs0 实现 */
+
+    /* 临时屏蔽未使用参数警告 */
+    (void)topic;
+    (void)data;
+    (void)len;
 }
 
 /*=====================================================================
@@ -284,7 +486,24 @@ void MQTT_PublishQs1(char *topic, char *data, int len)
  *=====================================================================*/
 void MQTT_PingREQ(void)
 {
-    /* TODO【C】：从 36 号工程移植 */
+    /*=================================================================
+     * 功能：发送 PINGREQ 心跳包（2 字节，最简单的一条 MQTT 报文）
+     *
+     * 报文结构：
+     *   0xC0  固定头（高4位 1100 = PINGREQ）
+     *   0x00  剩余长度 = 0（没有可变头和载荷）
+     *
+     * ★ 为什么必须发 ★
+     *   CONNECT 报文里声明了 KeepAlive = 100 秒。
+     *   如果 100 秒内没有任何报文交互，服务器会认为客户端掉线并断开。
+     *   所以要定期发 PINGREQ，服务器回 PINGRESP，保持连接活着。
+     *
+     * ★ 发送频率建议 ★
+     *   KeepAlive 的一半，即 50 秒左右发一次。
+     *================================================================*/
+    static u8 pack[2] = {0xC0, 0x00};
+
+    Usart3_SendBuffer(pack, 2);
 }
 
 /*=====================================================================
