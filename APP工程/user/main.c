@@ -57,18 +57,7 @@
 #include "spi.h"
 #include "cat1.h"
 #include "mqtt.h"
-
-/*=====================================================================
- * 测试用的 URL（★调试阶段临时用，正式版从云端获取★）
- *
- * 为什么叫 TEST_URL 而不是 URL：
- *   URL 太通用，容易和其他变量/宏冲突。
- *
- * 换成自己的固件地址时改这里，比如：
- *   #define TEST_URL  "http://xxx.com/fw.bin"
- *===================================================================*/
-#define TEST_URL    "http://httpbin.org/get"
-
+#define TEST_URL "http://httpbin.org/get" // TODO [A] 测试阶段用
 /*=====================================================================
  * 全局变量定义（★只能在这里定义一次，其他文件用 extern 引用★）
  *
@@ -166,7 +155,7 @@ void ActiveEvent(void)
  *====================================================================*/
 int main(void)
 {
-    u8 ret;     /* CAT1_SendAT 的返回值：0=成功 1=超时 */
+    u8 ret; /* CAT1_SendAT 的返回值：0=成功 1=超时 */
 
     /*---------- 1. 初始化调试串口（必须最先）----------*/
     Usart1_Init(USART1_BRR);
@@ -188,16 +177,7 @@ int main(void)
     {
         Usart1_SendString("GPRS 激活失败，检查 SIM 卡和信号\r\n");
     }
-
-    /*---------- 4.5 测试 HTTP（★A 的调试代码，正式版删掉★）----------*/
-    /* CAT1_HttpInit 内部会做：
-     *   ① AT+QICSGP   配置 APN
-     *   ② AT$HTTPOPEN 开启 HTTP 服务
-     *   ③ AT$HTTPPARA 配置 URL
-     *   ④ AT$HTTPACTION=0 发 GET 请求
-     * 返回值 0=成功，1~4 表示哪一步失败（函数内已打印）
-     */
-    if (CAT1_HttpInit(TEST_URL) != 0)
+    if (CAT1_HttpInit(TEST_URL))
     {
         Usart1_SendString("[HTTP] 初始化失败\r\n");
     }

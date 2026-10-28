@@ -134,64 +134,6 @@
  *=====================================================================*/
 #include "cat1.h"
 
-
-
-/*=====================================================================
- * 函数：CAT1_PowerOn
- * 负责：A
- *
- * ★★★ 本工程用的是成品底板，上电即工作，不需要 PWRKEY 时序 ★★★
- *
- * 实测（2026-10-27）：
- *   底板 VIN 接 5V，EN 悬空 → 模块自动启动，
- *   等约 10~15 秒后发 AT 就能收到 OK。
- *
- * 所以本函数只做一件事：【等模块启动完成】。
- *
- * ===== 实现要点 =====
- *   1. 先给模块一点启动时间：
- *        delay_ms(3000);
- *      ← 刚上电时模块内部还在初始化，太早发 AT 没响应
- *
- *   2. 循环 timeout 次（每次 100ms），发 AT 探测：
- *        for(i = 0; i < timeout; i++) {
- *            delay_ms(100);
- *            if (i % 10 == 0) {              // 每 1 秒试一次
- *                if (CAT1_SendAT("AT", "OK", 500) == 0)
- *                    return 0;                // 模块已响应
- *            }
- *        }
- *
- *   3. 超时返回 1
- *
- * ===== 参数说明 =====
- *   timeout - 单位 100ms，600 = 60 秒
- *             建议值：300（30秒）够用，冷启动慢的给 600
- *
- * ===== 排错 =====
- *   如果一直超时，按顺序查：
- *     1. 模块 VIN 有没有接 5V（不是 3.3V）
- *     2. GND 有没有和 STM32 共地
- *     3. TX/RX 有没有接反（模块 TX → PB11，模块 RX → PB10）
- *     4. 板子 P5 跳线帽有没有拔掉
- *     5. K1 拨动开关有没有拨到 TXD 侧
- *
- * ===== 如果以后换成裸模块 =====
- *   在 delay_ms(3000) 之前加开机时序：
- *     PWRKEY_LOW();
- *     delay_ms(1500);        // 规格书要求 >1 秒
- *     PWRKEY_HIGH();
- *     delay_ms(3000);
- *   并且要注意：PWRKEY 是"开关机切换"，已开机再拉会关机，
- *   所以裸模块方案要先发 AT 探测，活着就别拉。
- *====================================================================*/
-u8 CAT1_PowerOn(u16 timeout)
-{
-    /* TODO【A】：实现 */
-
-    return 1;
-}
-
 /*=====================================================================
  * 函数：CAT1_SendAT
  * 负责：A
@@ -261,8 +203,10 @@ u8 CAT1_ActiveGPRS(void)
     /*---------- 2. 等网络注册（最多 60 秒）----------*/
     for (i = 0; i < 60; i++)
     {
-        if (CAT1_SendAT("AT+CREG?", ",1", 2000) == 0) break;   /* 本地注册 */
-        if (CAT1_SendAT("AT+CREG?", ",5", 2000) == 0) break;   /* 漫游注册 */
+        if (CAT1_SendAT("AT+CREG?", ",1", 2000) == 0)
+            break; /* 本地注册 */
+        if (CAT1_SendAT("AT+CREG?", ",5", 2000) == 0)
+            break; /* 漫游注册 */
         delay_ms(1000);
     }
     if (i >= 60)
@@ -395,9 +339,8 @@ u8 CAT1_ActiveGPRS(void)
  *====================================================================*/
 u8 CAT1_HttpInit(char *url)
 {
-    /* TODO【A】：实现 */
     char cmd[URL_LEN];
-    if(CAT1_SendAT("AT+QICSGP=1,1,\"CMNET\",\"\",\"\",1", "OK", 10000))
+    if (CAT1_SendAT("AT+QICSGP=1,1,\"CMNET\",\"\",\"\",1", "OK", 10000))
     {
         Usart1_SendString("APN配置失败\r\n");
         return 1;
@@ -407,8 +350,8 @@ u8 CAT1_HttpInit(char *url)
         Usart1_SendString("[HTTP] 服务开启失败\r\n");
         return 2;
     }
-    sprintf(cmd,"AT$HTTPPARA=%s,80",url);
-    if (CAT1_SendAT(cmd,"OK",8000))
+    sprintf(cmd, "AT$HTTPPARA=%s,80", url);
+    if (CAT1_SendAT(cmd, "OK", 8000))
     {
         Usart1_SendString("[URL ]配置失败\r\n");
         return 3;
@@ -416,7 +359,7 @@ u8 CAT1_HttpInit(char *url)
     if (CAT1_SendAT("AT$HTTPACTION=0", "OK", 5000))
     {
         Usart1_SendString("[GET] 请求发送失败\r\n");
-       return 4;
+        return 4;
     }
     Usart1_SendString("[HTTP]连接成功\r\n");
     return 0;
@@ -523,10 +466,73 @@ u8 CAT1_HttpInit(char *url)
  *      下载时要判断：这段是头还是体
  *
  *====================================================================*/
-u8 CAT1_HttpRead(u8 *data, u16 datalen, u8 *outbuf, u16 maxlen, u16 *outlen)
+u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
 {
-    /* TODO【A】：实现 */
-    return 1;
+    char *p;
+    u16 dlen;
+    u16 avail;
+    /// 防止传入空指针
+    if (outbuf == NULL || outlen == NULL)
+    {
+        Usart1_SendString("传入缓存区为空\r\n");
+        return 1;
+    }
+    /// 清楚输出长度 防止外侧收到脏数据
+    *outlen = 0;
+    if (usart3_value.count >= USART3_BUFFER_SIZE)
+    {
+        Usart1_SendString("接受超过最大长度\r\n");
+        return 1;
+    }
+    /// 给数据末尾加 \0
+    usart3_value.data[usart3_value.count] = 0;
+    /// 此时p在 $HTTPRECV:DATA,的第一位
+    p = strstr((char *)usart3_value.data, "$HTTPRECV:DATA,");
+    if (NULL == p)
+    {
+        Usart1_SendString("未找到标识符\r\n");
+        return 1;
+    }
+    // 将p 指向支付串的末尾
+    p += strlen("$HTTPRECV:DATA,");
+    dlen = (u16)atoi(p);
+    if (dlen == 0)
+    {
+        *outlen = 0;
+        return 0;
+    }
+    // 跳过后的\r\n
+    p = strchr(p, '\n');
+    if (NULL == p)
+    {
+        Usart1_SendString("未找到换行符\r\n");
+        return 1;
+        /* code */
+    }
+    // p++指向真正的数据位
+    p++;
+
+    if (dlen > maxlen)
+    {
+        Usart1_SendString("数据超出缓冲区\r\n");
+        return 2;
+    }
+    u16 offset; /* p 距离缓冲区开头多少字节 */
+
+    /* 第一步：算 p 的偏移量 */
+    offset = (u16)(p - (char *)usart3_value.data);
+
+    /* 第二步：算 p 后面还剩多少 */
+    avail = usart3_value.count - offset;
+
+    /* 第三步：检查 */
+    if (avail < dlen)
+    {
+        dlen = avail;
+    }
+    memcpy(outbuf, p, dlen);
+    *outlen = dlen;
+    return 0;
 }
 
 /*=====================================================================
@@ -652,8 +658,133 @@ u8 CAT1_HttpRead(u8 *data, u16 datalen, u8 *outbuf, u16 maxlen, u16 *outlen)
  *====================================================================*/
 u8 CAT1_OTA(char *url, u32 fw_len)
 {
-    /* TODO【A】：实现 */
-    return 1;
+    u8 buf[256];
+    u16 dlen;      /// 本次提取了多少字节
+    u32 total = 0; /// 累计已下载字节数
+    u32 addr = 0;  /// W25Q128地址
+    u16 seg;
+    u8 got_header = 0; /// 标记“是否已经跳过 HTTP 响应头”。
+    u16 block;
+    u16 i;
+
+    /* ① 算要擦几块（★用 65536，u16）★ */
+    block = (u16)((fw_len + 65535) / 65536);
+    if (block == 0)
+        block = 1;
+
+    /* ② 激活网络 */
+    Usart1_SendString("[OTA] 网络激活...\r\n");
+    if (CAT1_ActiveGPRS())
+    {
+        Usart1_SendString("[OTA] 网络激活失败\r\n");
+        return 1;
+    }
+
+    /* ③ HTTP 初始化 */
+    Usart1_SendString("[OTA] 开始下载...\r\n");
+    if (CAT1_HttpInit(url))
+    {
+        Usart1_SendString("[OTA] HTTP 初始化失败\r\n");
+        return 2;
+    }
+
+    /* ④ 擦 Flash */
+    Usart1_SendString("[OTA] 擦除 Flash");
+    for (i = 0; i < block; i++)
+    {
+        W25Q128_EraseBlock((u8)i);
+        Usart1_SendString(".");
+    }
+    Usart1_SendString("\r\n");
+
+    /* ⑤ 接收循环 */
+    Usart1_SendString("[OTA] 接收数据...\r\n");
+    for (seg = 0; seg < 60000; seg++)
+    {
+        delay_ms(20);
+
+        if (usart3_value.flag == 0)
+            continue;
+        usart3_value.flag = 0;
+
+        if (CAT1_HttpRead(buf, sizeof(buf), &dlen) != 0)
+        {
+            usart3_value.count = 0;
+            continue;
+        }
+
+        if (dlen == 0)
+        {
+            usart3_value.count = 0;
+            continue;
+        }
+
+        /* ★跳过响应头（可能多段）★ */
+        if (got_header == 0 && strncmp((char *)buf, "HTTP/", 5) == 0)
+        {
+            got_header = 1;
+            Usart1_SendString("[OTA] 响应头 ");
+            {
+                char num[8];
+                sprintf(num, "%u", dlen);
+                Usart1_SendString(num);
+            }
+            Usart1_SendString(" 字节\r\n");
+
+            usart3_value.count = 0;
+            continue;
+        }
+
+        /* ★写 Flash（函数调用！）★ */
+        if (W25Q128_Write(addr, buf, dlen) != 0)
+        {
+            Usart1_SendString("\r\n[OTA] Flash 写入失败\r\n");
+            CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
+            return 3;
+        }
+
+        addr += dlen;
+        total += dlen;
+
+        /* 进度点 */
+        if ((total % 4096) < dlen)
+        {
+            Usart1_SendString(".");
+        }
+
+        usart3_value.count = 0;
+
+        /* 收完了吗 */
+        if (total >= fw_len)
+            break;
+    }
+
+    /* ⑥ 检查是否收完 */
+    if (total < fw_len)
+    {
+        Usart1_SendString("\r\n[OTA] 超时，只收到 ");
+        {
+            char num[16];
+            sprintf(num, "%lu", (unsigned long)total);
+            Usart1_SendString(num);
+        }
+        Usart1_SendString(" 字节\r\n");
+        CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
+        return 4;
+    }
+
+    /* ⑦ 关闭 HTTP */
+    CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
+
+    Usart1_SendString("\r\n[OTA] 下载完成，共 ");
+    {
+        char num[16];
+        sprintf(num, "%lu", (unsigned long)total);
+        Usart1_SendString(num);
+    }
+    Usart1_SendString(" 字节\r\n");
+
+    return 0;
 }
 
 /*=====================================================================
