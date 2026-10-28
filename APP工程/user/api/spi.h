@@ -20,7 +20,18 @@
 #define W25Q_CS_PORT        GPIOB
 #define W25Q_CS_PIN         GPIO_Pin_12
 
+/*
+ * SPI 读写的超时错误码
+ * ★注意：宏定义末尾【不能带分号】★
+ *   写成 #define SPI2_ERROR (0xFF);
+ *   展开到 if (x == SPI2_ERROR) 会变成 if (x == (0xFF);) → 语法错误。
+ */
+#define SPI2_ERROR          0xFF
+
+// 拉低 CS
 #define W25Q_CS_LOW()       (W25Q_CS_PORT->BRR  = W25Q_CS_PIN)
+
+// 拉高 CS
 #define W25Q_CS_HIGH()      (W25Q_CS_PORT->BSRR = W25Q_CS_PIN)
 
 /*==================== W25Q128 指令 ====================*/
@@ -32,7 +43,22 @@
 #define W25Q_SECTOR_ERASE   0x20
 #define W25Q_BLOCK_ERASE    0xD8
 
-#define W25Q128_JEDEC_ID    0xEF4018
+#define W25Q128_JEDEC_ID    0xEF4018   /* Winbond 原厂：厂商 EF + 容量 18(16MB) */
+
+/*--------------------------------------------------------------------
+ * ★实测修正（2026-10-27 上板验证）★
+ * 本板实际 Flash 读回的 JEDEC ID 是 0x522118，不是 0xEF4018：
+ *     0x52 = 厂商码（不是 Winbond 的 0xEF，是兼容/国产片）
+ *     0x21 = 存储类型
+ *     0x18 = 容量码 → 2^0x18 = 16MB  ★和 W25Q128 一样大★
+ * 已实测：0x000000 / 0x7FF000 / 0x800000 / 0xFFF000 全部可擦可写，
+ *         写不同图案互不覆盖 → 容量确实是完整 16MB，无地址回绕。
+ * 结论：芯片规格与 W25Q128 等价，只是厂商不同。
+ * 所以初始化判定改为「只校验容量码 0x18」，不锁死厂商，
+ * 这样换回 Winbond 原厂片（0xEF4018）也照样通过。
+ *------------------------------------------------------------------*/
+#define W25Q_CAP_16MB       0x18       /* 容量码：2^24 = 16MB */
+#define W25Q128_CAP_MASK    0x0000FF   /* 取最低字节 = 容量码 */
 
 /*==================== 函数声明 ====================*/
 

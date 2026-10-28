@@ -456,20 +456,28 @@ void Usart3_Init(u32 brr)
            例如 brr=115200：36000000/16=2250000，2250000/115200=19（不是 19.53125）
            这样算出来的 BRR 是错的，波特率偏差大，通信失败。
 
-      改用和 Usart1_Init 一致的整数算法（已实测正确）：
-        BRR 高 12 位 = 整数部分
-        BRR 低 4 位  = 小数部分（1/16 单位）
+      ★★★ 还要注意：即使改成整数运算，小数部分也不能再乘 16 ★★★
+      曾经写成：
+          u32 usart_remainder = usart_div - usart_mantissa * 16;
+          u16 usart_fraction = (usart_remainder * 16 + brr / 2) / brr;
+      brr=115200 时：usart_div = 36000000/115200 = 312（这就是 BRR 的值，
+      已经是 16 倍的 USARTDIV），mantissa = 312/16 = 19，remainder = 8。
+      【remainder 本身就是"1/16 单位的小数部分"，直接填进 BRR 低 4 位即可】。
+      上面那行又乘了 16 再除 brr：(8*16 + 57600)/115200 = 0，
+      于是 fraction = 0 → BRR = 0x130 = 304 → 实际 118421，误差 2.80%。
+      绕了一圈又回到了原来那个错误值。
+
+      正确做法：全程整数运算，remainder 直接用。
+        36000000/115200 = 312.5 → 取 312
+          → mantissa = 312/16 = 19
+          → fraction = 312 - 19*16 = 8
+          → BRR = (19<<4)|8 = 0x138 = 312
+          → 实际 36000000/(16*(19+8/16)) = 115385，误差 0.16%  ✓
     */
-    u32 usart_div = 36000000 / brr;                              /* 16 倍的 USARTDIV */
-    u16 usart_mantissa = usart_div / 16;                         /* 整数部分 */
-    u32 usart_remainder = usart_div - usart_mantissa * 16;       /* 余数 */
-    u16 usart_fraction = (usart_remainder * 16 + brr / 2) / brr; /* 小数部分，四舍五入 */
-    if (16 == usart_fraction)                                    /* 0.999 这种情况要进位 */
-    {
-        usart_fraction = 0;
-        usart_mantissa += 1;
-    }
-    USART3->BRR = (usart_mantissa << 4) | usart_fraction;
+    u32 usart_div = 36000000 / brr;                                   /* = 16×USARTDIV，也就是 BRR 的值 */
+    u16 usart_mantissa = (u16)(usart_div / 16);                       /* 整数部分 */
+    u16 usart_fraction = (u16)(usart_div - (u32)usart_mantissa * 16); /* 小数部分（1/16 单位，直接用） */
+    USART3->BRR = (u16)((usart_mantissa << 4) | usart_fraction);
 
     // 3.3 注册当前 USART3 对应 RXNE 和 IDLE 中断
     USART3->CR1 |= (0x01 << 5); // RXNE 使能
