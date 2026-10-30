@@ -570,7 +570,7 @@ u8 CAT1_OTA(char *url, u32 fw_len)
 
 u8 CAT1_ParseOTA(char *json)
 {
-    /* TODO【C】：实现 */
+    
     return 1;
 }
 u8 CAT1_SendMQTTPacket(u8 *buf, u16 len)
