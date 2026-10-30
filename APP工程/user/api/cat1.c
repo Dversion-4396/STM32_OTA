@@ -365,107 +365,7 @@ u8 CAT1_HttpInit(char *url)
     return 0;
 }
 
-/*=====================================================================
- * 函数：CAT1_HttpRead
- * 负责：A
- *
- * 功能：从收到的数据里提取一段 $HTTPRECV:DATA 的载荷
- * 参数：data   - 收到的一段数据（usart3_value.data）
- *       len    - 这段数据的长度（usart3_value.count）
- *       outbuf - 输出缓冲区（提取出的数据放这里）
- *       maxlen - outbuf 的最大长度
- * 返回：0 = 提取到数据，*outlen 是实际提取的字节数
- *       1 = 这段数据不是 $HTTPRECV:DATA 格式
- *       2 = outbuf 不够大
- *
- *=====================================================================
- * ★★★ 这个函数和原来的设计完全不同 ★★★
- *
- *   原设计（阿里云 Air724）：
- *     AT+HTTPREAD=<offset>,<len>   ← 要自己指定偏移量去读
- *
- *   本模块：
- *     数据主动推送，格式是：
- *       $HTTPRECV:DATA,<len>\r\n<len 字节数据>
- *
- *   所以这个函数【不是发指令读数据】，
- *   而是【从已收到的数据里把载荷提取出来】。
- *
- *=====================================================================
- * ★ 数据格式解析 ★
- *
- * 收到的原始数据示例：
- *
- *   \r\n$HTTPRECV:DATA,199\r\n{"args": {}, ...}\r\nOK\r\n
- *       ↑                 ↑ ↑                  ↑
- *     头部标记          长度  真正的数据        结束
- *
- * 解析步骤：
- *   1. strstr 找到 "$HTTPRECV:DATA,"
- *   2. 从它后面 atoi 出长度
- *   3. 找 '\n' 跳过换行
- *   4. 从那里开始 memcpy 出 <len> 字节
- *
- *=====================================================================
- * ★ 实现示例 ★
- *
- *   u8 CAT1_HttpRead(u8 *data, u16 len, u8 *outbuf, u16 maxlen, u16 *outlen)
- *   {
- *       char *p;
- *       u16  dlen;
- *       u16  avail;
- *
- *       if (data == NULL || outbuf == NULL || outlen == NULL) return 1;
- *
- *       /* 1. 确保字符串以 \0 结尾，才能用 strstr *\/
- *       if (len >= USART3_BUFFER_SIZE) return 1;
- *       data[len] = 0;
- *
- *       /* 2. 找头部标记 *\/
- *       p = strstr((char *)data, "$HTTPRECV:DATA,");
- *       if (p == NULL) return 1;
- *
- *       /* 3. 解析长度 *\/
- *       p += strlen("$HTTPRECV:DATA,");
- *       dlen = (u16)atoi(p);
- *       if (dlen == 0) { *outlen = 0; return 0; }   /* 空段，正常 *\/
- *
- *       /* 4. 跳过长度后面的 \r\n *\/
- *       p = strchr(p, '\n');
- *       if (p == NULL) return 1;
- *       p++;
- *
- *       /* 5. 检查 outbuf 够不够 *\/
- *       if (dlen > maxlen) return 2;
- *
- *       /* 6. 检查剩余数据够不够 dlen 字节 *\/
- *       avail = (u16)(len - (u16)(p - (char *)data));
- *       if (avail < dlen) dlen = avail;   /* 不够就只取有的 *\/
- *
- *       /* 7. ★定长拷贝，必须用 memcpy★ *\/
- *       /* 固件是二进制，里面有 0x00，用 strcpy 会被截断 *\/
- *       memcpy(outbuf, p, dlen);
- *       *outlen = dlen;
- *
- *       return 0;
- *   }
- *
- *=====================================================================
- * ★ 三个注意点 ★
- *
- *   1. 必须用 memcpy 不能用 strcpy
- *      固件二进制里有 0x00，strcpy 遇到就停
- *
- *   2. 长度要双重检查
- *      ① dlen 不能超过 outbuf 大小
- *      ② 剩余数据不能少于 dlen（可能一段数据被中断拆开）
- *
- *   3. 响应头和响应体要分开处理
- *      第一段 $HTTPRECV:DATA,230 是 HTTP 响应头
- *      第二段 $HTTPRECV:DATA,199 是真正的固件数据
- *      下载时要判断：这段是头还是体
- *
- *====================================================================*/
+
 u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
 {
     char *p;
@@ -535,127 +435,7 @@ u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
     return 0;
 }
 
-/*=====================================================================
- * 函数：CAT1_OTA
- * 负责：A
- *
- * 功能：完整下载固件到 W25Q128
- * 参数：url    - 固件下载地址
- *       fw_len - 固件总长度（含 28 字节尾缀）
- * 返回：0 = 成功
- *       2 = GPRS 激活失败
- *       3 = HTTP 初始化失败
- *       4 = 下载过程中出错
- *       5 = 擦 Flash 失败
- *
- *=====================================================================
- * ★ 完整流程（基于实测通过的指令）★
- *
- *   1. 激活 GPRS
- *        if (CAT1_ActiveGPRS()) return 2;
- *
- *   2. 开启 HTTP 并配置 URL
- *        if (CAT1_HttpInit(url)) return 3;
- *
- *   3. 擦 W25Q128（按固件大小算要擦几个 64KB 块）
- *        blocks = (fw_len + 65535) / 65536;
- *        for (b = 0; b < blocks; b++) W25Q128_EraseBlock(b);
- *
- *   4. ★循环接收数据，解析 $HTTPRECV:DATA，写 Flash★
- *        这是核心，难点在于：
- *          - 数据是异步推送的，不是一次给完
- *          - 每段前面有 $HTTPRECV:DATA,<len> 标记
- *          - 第一段是响应头，要跳过
- *          - 后面的段才是固件数据
- *
- *   5. 关闭 HTTP 服务
- *        CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
- *
- *   6. 校验（可选）
- *        读回 W25Q128 前 28 字节尾缀，检查魔数 CD EF CD EF
- *
- *=====================================================================
- * ★ 第 4 步的实现要点（最关键）★
- *
- *   u8 CAT1_OTA(char *url, u32 fw_len)
- *   {
- *       u8  buf[256];
- *       u16 dlen;
- *       u16 page = 0;
- *       u32 total = 0;          /* 已收到多少字节 *\/
- *       u8  got_header = 0;     /* 是否已跳过响应头 *\/
- *       u16 seg;
- *
- *       /* ... 步骤 1-3 ... *\/
- *
- *       /* 发请求 *\/
- *       Usart3_SendString("AT$HTTPACTION=0\r\n");
- *
- *       /* 循环接收（超时要够长，固件可能几 MB）*\/#
- *       for (seg = 0; seg < 60000; seg++)
- *       {
- *           delay_ms(10);
- *
- *           if (usart3_value.flag == 0) continue;
- *
- *           usart3_value.flag = 0;
- *
- *           /* 解析这段 *\/
- *           if (CAT1_HttpRead(usart3_value.data, usart3_value.count,
- *                             buf, sizeof(buf), &dlen) == 0)
- *           {
- *               if (!got_header)
- *               {
- *                   /* 第一段是 HTTP 响应头，跳过 *\/
- *                   /* 但要从里面读 Content-Length 确认大小 *\/
- *                   got_header = 1;
- *               }
- *               else if (dlen > 0)
- *               {
- *                   /* 这是固件数据，写 Flash *\/
- *                   /* 注意：一段可能不是 256 的整数倍，要拼页 *\/
- *                   W25Q128_WritePage(page++, buf);
- *                   total += dlen;
- *
- *                   /* 打印进度 *\/
- *                   if ((page % 16) == 0) Usart1_SendString(".");
- *
- *                   if (total >= fw_len) break;   /* 收完了 *\/
- *               }
- *           }
- *
- *           usart3_value.count = 0;
- *       }
- *
- *       CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
- *       return 0;
- *   }
- *
- *=====================================================================
- * ★ 五个坑 ★
- *
- *   坑 1：一段数据可能不是 256 字节的整数倍
- *        W25Q128 页写必须 256 字节对齐
- *        需要自己维护一个 256 字节的拼包缓冲
- *
- *   坑 2：响应头和响应体要分开
- *        第一段 $HTTPRECV:DATA,230 是 HTTP 头
- *        别把 "HTTP/1.1 200 OK" 写进 Flash
- *
- *   坑 3：超时要够长
- *        下载 100KB 可能要 30 秒以上
- *        循环次数按最坏情况算
- *
- *   坑 4：中途出错要能重试
- *        网络抖动会导致某段丢失
- *        可以记录已下载位置，重新请求（但本模块不支持 Range 请求，
- *        所以只能整个重下）
- *
- *   坑 5：Flash 要先擦再写
- *        W25Q128 擦除最小单位是 4KB 扇区或 64KB 块
- *        必须先擦后写，否则数据是错的
- *
- *====================================================================*/
+
 u8 CAT1_OTA(char *url, u32 fw_len)
 {
     u8 buf[256];
@@ -787,109 +567,52 @@ u8 CAT1_OTA(char *url, u32 fw_len)
     return 0;
 }
 
-/*=====================================================================
- * 函数：CAT1_ParseOTA
- * 负责：C
- *
- * 功能：解析巴法云下发的 OTA 命令
- * 参数：json - 收到的消息内容
- * 返回：0 = 解析成功
- *       1 = 格式不对（找不到逗号分隔）
- *       2 = 数据不合法（大小或 MD5 长度不对）
- *
- *=====================================================================
- * ★ 巴法云报文格式（★和阿里云完全不同★）
- *
- *   阿里云：平台推固定 JSON，格式不能改
- *     {"data":{"size":31236,"sign":"xxx","version":"...",
- *      "signMethod":"Md5","url":"https://xxx/fw.bin","md5":"abc"},
- *      "id":123,"message":"success"}
- *
- *   巴法云：你在电脑/手机上往 Topic 发什么就是什么，格式自己定
- *     推荐用纯文本逗号分隔（最简单，好解析）：
- *       http://xxx.com/fw.bin,31236,abc123def456...
- *              ↑ URL          ↑ 大小  ↑ MD5（可选）
- *
- *   为什么用逗号分隔：
- *     1. 解析只要 strchr + atoi，十几行搞定
- *     2. 不用写 JSON 解析器
- *     3. URL 里正常不会出现逗号，不会有歧义
- *
- *=====================================================================
- * ★ 实现要点 ★
- *
- *   u8 CAT1_ParseOTA(char *msg)
- *   {
- *       char *p;
- *       char *url;
- *       char *size_str;
- *       char *md5_str;
- *
- *       /* 1. 找第一个逗号，前面是 URL *\/
- *       p = strchr(msg, ',');
- *       if (p == NULL) return 1;          /* 没有逗号，格式不对 *\/
- *       *p = '\0';                        /* 把逗号改成字符串结束符 *\/
- *       url = msg;
- *       size_str = p + 1;                 /* 逗号后面是大小 *\/
- *
- *       /* 2. 找第二个逗号，前面是大小，后面是 MD5 *\/
- *       p = strchr(size_str, ',');
- *       if (p != NULL)
- *       {
- *           *p = '\0';
- *           md5_str = p + 1;
- *       }
- *       else
- *       {
- *           md5_str = NULL;               /* 没有 MD5，跳过校验 *\/
- *       }
- *
- *       /* 3. 保存 URL 和大小 *\/
- *       if (strlen(url) > OTA_URL_LEN) return 2;
- *       strcpy((char *)URL_ABuff, url);
- *       BemfaInfoCB.OTA_firelen = atoi(size_str);
- *
- *       /* 4. 校验大小合理性 *\/
- *       if (BemfaInfoCB.OTA_firelen == 0 ||
- *           BemfaInfoCB.OTA_firelen > FLASH_A_SIZE) return 2;
- *
- *       /* 5. 打印调试 *\/
- *       Usart1_SendString("[OTA] URL: ");
- *       Usart1_SendString((char *)URL_ABuff);
- *       Usart1_SendString("\r\n");
- *
- *       return 0;
- *   }
- *
- *=====================================================================
- * ★ 三个注意点 ★
- *
- *   注意 1：atoi 返回 int，固件大小要转 u32
- *           atoi 上限是 2^31-1（约 2GB），固件一般 < 4MB，够用
- *           但赋值时要强转：BemfaInfoCB.OTA_firelen = (u32)atoi(size_str);
- *
- *   注意 2：strchr 会修改原字符串（把逗号改成 '\0'）
- *           如果原消息后面还要用，先 strcpy 一份副本再解析
- *
- *   注意 3：URL 长度必须检查
- *           URL_ABuff 只有 513 字节，超了会溢出
- *           用 strlen 检查后再 strcpy
- *
- *=====================================================================
- * ★ 云端怎么发这条消息 ★
- *
- *   方式 1：巴法云网页控制台
- *     登录 cloud.bemfa.com → 找到你的 Topic → 发送消息
- *     内容填：http://xxx.com/fw.bin,31236,abc123...
- *
- *   方式 2：MQTT 客户端软件（MQTTX）
- *     连接 bemfa.com:9501，Username/Password 都填 UID
- *     往 Topic "ota{uid}" 发布消息
- *
- *   方式 3：手机 APP（巴法云官方有）
- *====================================================================*/
+
 u8 CAT1_ParseOTA(char *json)
 {
     /* TODO【C】：实现 */
     return 1;
+}
+u8 CAT1_SendMQTTPacket(u8 *buf, u16 len)
+{
+    char cmd[64];
+    u8   ret;
+
+    /*---------- ① 告诉模块要发多少字节 ----------*/
+    sprintf(cmd, "AT+CIPSEND=0,%d", len);
+
+    /* 等模块回 ">" 提示符
+     * 注意：提示符是单个字符 >，不是 "OK"
+     * 超时给 5 秒，模块要准备 TCP 发送缓冲 */
+    ret = CAT1_SendAT(cmd, ">", 5000);
+    if (ret != 0)
+    {
+        Usart1_SendString("[CAT1] CIPSEND 未收到提示符\r\n");
+        return 1;
+    }
+
+    /*---------- ② 发送原始数据 ----------
+     * ★ 这里不能用 Usart3_SendString（它不能处理二进制 0x00）★
+     *   必须用 SendBuffer 按长度发
+     *------------------------------------------------*/
+    Usart3_SendBuffer(buf, len);
+
+    /*---------- ③ 等发送完成 ----------
+     * 手册没给明确响应，常见是 +CIPSEND: <len> 或 SEND OK
+     * 这里等 5 秒，只要收到任何响应就算成功
+     *------------------------------------------------*/
+    ret = CAT1_SendAT("", "CIPSEND", 5000);
+
+    /* ★ 注意：CAT1_SendAT("") 会多发一个空指令的 \r\n
+     *   如果实测发现多余，改成下面这种"只等不收"的写法：
+     *
+     *   usart3_value.flag = 0;
+     *   usart3_value.count = 0;
+     *   for (i = 0; i < 50; i++) {
+     *       delay_ms(100);
+     *       if (usart3_value.flag) break;
+     *   }
+     */
+
+    return 0;       /* 即使没等到响应也返回成功，避免误判 */
 }

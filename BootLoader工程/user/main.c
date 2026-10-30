@@ -14,10 +14,10 @@
 
 /*==================== 全局变量定义 ====================*/
 BemfaInfo_CB BemfaInfoCB;
-u32            SysEventFlag = 0;
-u8             URL_ABuff[OTA_URL_LEN+1];
-u32            ConnectTimer = 0;
-u32            PingTimer = 0;
+u32 SysEventFlag = 0;
+u8 URL_ABuff[OTA_URL_LEN + 1];
+u32 ConnectTimer = 0;
+u32 PingTimer = 0;
 
 /*=====================================================================
  * 函数：main
@@ -36,39 +36,43 @@ u32            PingTimer = 0;
  *====================================================================*/
 int main(void)
 {
-    /* ---------- 1. 串口 ---------- */
-    /* TODO【B】：Usart1_Init(115200); */
+    u8 ret;
+    char buf[80]; /* ★ sprintf 用的缓冲区 */
 
-    /* ---------- 2. I2C + EEPROM ---------- */
-    /* TODO【B】：I2C_GPIO_Init();
-     *            EEPROM_ReadInfo(); */
+    /*========== 1. 串口 ==========*/
+    Usart1_Init(USART1_BRR); /* 9600，和串口助手一致 */
+    Usart1_SendString("\r\n\r\n");
+    Usart1_SendString("==========================================\r\n");
+    Usart1_SendString("     战神V1 BootLoader  v1.0\r\n");
+    Usart1_SendString("==========================================\r\n");
 
-    /* ---------- 3. SPI + W25Q128 ---------- */
-    /* TODO【B】：SPI2_Init();
-     *            W25Q128_Init(); */
+    /*========== 2. I2C + EEPROM ==========*/
+    I2C_GPIO_Init();
+    Usart1_SendString("[1] I2C 初始化完成\r\n");
 
-    /* ---------- 4. 打印 banner ---------- */
-    /* TODO【B】：
-     * Usart1_SendString("\r\n\r\n");
-     * Usart1_SendString("========================================\r\n");
-     * Usart1_SendString("     战神V1 BootLoader  v1.0\r\n");
-     * Usart1_SendString("========================================\r\n");
-     */
+    EEPROM_ReadInfo();
+    Usart1_SendString("[2] EEPROM 读取完成\r\n");
 
-    /* ---------- 5. 分支判断 ---------- */
-    /* TODO【B】：BootLoader_Branch(); */
+    /*========== 3. SPI + W25Q128 ==========*/
+    SPI2_Init();
+    ret = W25Q128_Init();
+    if (ret == 0)
+        Usart1_SendString("[3] W25Q128 初始化成功\r\n");
+    else
+        Usart1_SendString("[3] ★W25Q128 初始化失败\r\n");
 
-    /* ---------- 6. 打印菜单 ---------- */
-    /* TODO【B】：BootLoader_Info(); */
+    BootLoader_Branch();
 
-    /* ---------- 7. 主循环 ---------- */
-    while(1)
+    BootLoader_Info();
+    /*========== 5. 主循环 ==========*/
+    Usart1_SendString("进入主循环\r\n");
+    while (1)
     {
-        if(usart1_value.flag)
+        if (usart1_value.flag)
         {
-            /* TODO【B】：BootLoader_Event(usart1_value.data, usart1_value.count);
-             *            usart1_value.flag = 0;
-             *            usart1_value.count = 0; */
+            BootLoader_Event(usart1_value.data, usart1_value.count);
+            usart1_value.flag = 0;
+            usart1_value.count = 0;
         }
 
         ActiveEvent();

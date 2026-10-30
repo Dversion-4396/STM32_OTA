@@ -119,5 +119,5 @@ u8 CAT1_OTA(char *url, u32 fw_len);
  * 负责：C
  *-------------------------------------------------------------------*/
 u8 CAT1_ParseOTA(char *json);
-
+u8 CAT1_SendMQTTPacket(u8 *buf, u16 len);
 #endif /* __CAT1_H */

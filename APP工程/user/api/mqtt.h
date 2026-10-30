@@ -50,6 +50,7 @@
 #define __MQTT_H
 
 #include "common.h"
+#include "cat1.h"
 
 /*==================== 缓冲区尺寸 ====================*/
 #define TOPIC_NUM          3               /* 最多订阅几个 Topic */
@@ -60,6 +61,8 @@
 #define USERNAME_KEY "a0f83060ae0a4750a09d1607611f3b32" // 巴法云平台秘钥
 #define SERVER_IP "bemfa.com"                           // 巴法云订阅主题地址
 #define SERVER_PORT (9501)                              // 巴法云订阅主题端口号
+#define TOPIC_1 "123"                                   // 巴法云订阅主题 1
+#define TOPIC_2 "abc"                                   // 巴法云订阅主题 2
 
 /*=====================================================================
  * MQTT 会话结构体
