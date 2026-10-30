@@ -13,6 +13,8 @@
 #include "stmflash.h"
 
 /*==================== 全局变量定义 ====================*/
+
+//巴法云参数 + OTA 状态
 BemfaInfo_CB BemfaInfoCB;
 u32 SysEventFlag = 0;
 u8 URL_ABuff[OTA_URL_LEN + 1];

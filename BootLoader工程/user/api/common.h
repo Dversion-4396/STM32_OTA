@@ -58,9 +58,12 @@
 #define Led_Red GPIOB   /* DS0，PB5，低电平点亮 */
 #define Led_Green GPIOE /* DS1，PE5，低电平点亮 */
 #define OLED_ADDR (0X3C)
+
+//  EEPROM 数据地址
 #define EEPROM_AT24C02_ADDR (0X50)
 #define RS485_GPIO_PIN GPIO_Pin_7
 #define RS485_GPIO_GROUP GPIOD
+
 typedef enum
 {
     WRITE_FLAG,

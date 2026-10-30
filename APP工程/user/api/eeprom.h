@@ -24,4 +24,18 @@ u8 EEPROM_WriteByte(u8 eeprom_addr, u8 reg_addr, u8 data);
  */
 u8 EEPROM_ReadByte(u8 eeprom_addr, u8 reg_addr);
 
+/**
+ * @brief 从 EEPROM 读出整个 BemfaInfoCB 结构体（99 字节）
+ * @return 0 = 参数有效，1 = 参数无效（首次上电 / 数据损坏）
+ */
+u8 EEPROM_ReadInfo(void);
+
+/**
+ * @brief 把整个 BemfaInfoCB 结构体（99 字节）写进 EEPROM
+ * @return 0 = 成功，1 = 失败
+ */
+u8 EEPROM_SaveInfo(void);
+
+
+
 #endif

@@ -171,7 +171,9 @@ u8 CAT1_SendAT(char *cmd, char *expect, u16 timeout_ms)
 
             if (strstr((char *)usart3_value.data, expect) != NULL)
             {
-
+                //不清除会导致下个包进行累加导致出错
+                usart3_value.flag = 0;
+                usart3_value.count = 0;
                 return 0;
             }
             usart3_value.flag = 0;
@@ -245,8 +247,7 @@ u8 CAT1_ActiveGPRS(void)
     }
 
     /*---------- 打印 IP ----------*/
-    Usart1_SendString("[GPRS] IP: ");
-    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
+    Usart1_SendString("[GPRS] 已拿到 IP: ");
     Usart1_SendString("\r\n");
 
     Usart1_SendString("[GPRS] 成功\r\n");
@@ -445,7 +446,19 @@ u8 CAT1_OTA(char *url, u32 fw_len)
     u16 block;
     u16 i;
 
-    /* ① 算要擦几块（★用 65536，u16）★ */
+    /* ① 入参防御：URL 空 / 大小超范围 直接拒绝 */
+    if (url == NULL || url[0] == '\0')
+    {
+        Usart1_SendString("[OTA] URL 为空\r\n");
+        return 5;
+    }
+    if (fw_len == 0 || fw_len > FLASH_A_SIZE)
+    {
+        Usart1_SendString("[OTA] 固件大小非法\r\n");
+        return 5;
+    }
+
+    /* ② 算要擦几块（★用 65536，u16）★ */
     block = (u16)((fw_len + 65535) / 65536);
     if (block == 0)
         block = 1;
@@ -477,7 +490,7 @@ u8 CAT1_OTA(char *url, u32 fw_len)
 
     /* ⑤ 接收循环 */
     Usart1_SendString("[OTA] 接收数据...\r\n");
-    for (seg = 0; seg < 60000; seg++)
+    for (seg = 0; seg < 6000; seg++)
     {
         delay_ms(20);
 
@@ -497,20 +510,47 @@ u8 CAT1_OTA(char *url, u32 fw_len)
             continue;
         }
 
-        /* ★跳过响应头（可能多段）★ */
-        if (got_header == 0 && strncmp((char *)buf, "HTTP/", 5) == 0)
+                /* ★跳过响应头★
+         * HTTP 响应头的结束标志是连续两个 \r\n（即 "\r\n\r\n"）。
+         * 原来的写法只认第一段以 "HTTP/" 开头的数据，
+         * 如果响应头被拆成两段，第二段会被当成固件写进 Flash。
+         * 这里改成"找到 \r\n\r\n 才算头结束"。 */
+        if (got_header == 0)
         {
-            got_header = 1;
-            Usart1_SendString("[OTA] 响应头 ");
-            {
-                char num[8];
-                sprintf(num, "%u", dlen);
-                Usart1_SendString(num);
-            }
-            Usart1_SendString(" 字节\r\n");
+            char *hdr_end = strstr((char *)buf, "\r\n\r\n");
 
-            usart3_value.count = 0;
-            continue;
+            if (hdr_end != NULL)
+            {
+                /* 头和体在同一段里：跳过头部，只写后面的体 */
+                u16 skip = (u16)((hdr_end - (char *)buf) + 4);
+
+                got_header = 1;
+                Usart1_SendString("[OTA] 响应头结束\r\n");
+
+                if (skip >= dlen)
+                {
+                    usart3_value.count = 0;
+                    continue;      /* 这一段全是头，没有体 */
+                }
+
+                /* 把体挪到 buf 开头，下面按正常流程写 Flash */
+                dlen = (u16)(dlen - skip);
+                memmove(buf, buf + skip, dlen);
+            }
+            else
+            {
+                /* 这一段全是头的一部分，丢掉继续收 */
+                Usart1_SendString("[OTA] 响应头片段 ");
+                {
+                    char num[8];
+                    sprintf(num, "%u", dlen);
+                    Usart1_SendString(num);
+                }
+                Usart1_SendString(" 字节\r\n");
+
+                usart3_value.count = 0;
+                continue;
+            }
         }
 
         /* ★写 Flash（函数调用！）★ */
@@ -531,12 +571,17 @@ u8 CAT1_OTA(char *url, u32 fw_len)
         }
 
         usart3_value.count = 0;
+        
+        //收到数据重置计时
+        seg = 0;
 
         /* 收完了吗 */
         if (total >= fw_len)
+        {
             break;
+        }
     }
-
+    
     /* ⑥ 检查是否收完 */
     if (total < fw_len)
     {
@@ -565,32 +610,78 @@ u8 CAT1_OTA(char *url, u32 fw_len)
     return 0;
 }
 
+//处理云端下发的 OTA 事件，解析 JSON 包
 u8 CAT1_ParseOTA(char *json)
 {
-    /* TODO【C】：实现 */
-    char *onedouhao = strchr(json, ',');
+    //存放原始 URL、大小、MD5
+    char *onedouhao;
+
+    //存放切割后的 URL、大小、MD5
+    char *url;
+
+    //每次找到 ',' 后，size_str 指向下一个字符
+    char *size_str;
+
+    //MD5 长度
+    char *md5_str;
+
+    //真实的 URL 长度
+    u32   url_len;
+
+    if (json == NULL)
+    {
+        return 1;
+    }
+
+    /* 报文格式：http://xxx/fw.bin,31236,md5(可选) */
+
+    /* ① 切出 URL */
+    onedouhao = strchr(json, ',');
     if (onedouhao == NULL)
     {
         return 1;
     }
     *onedouhao = '\0';
-    char *url = json;
-    char *size_str = onedouhao + 1;
-    char *md5_str = strchr(size_str, ',');
+    url      = json;
+    size_str = onedouhao + 1;
+
+    /* ② 切出大小，MD5 字段可有可无 */
+    md5_str = strchr(size_str, ',');
     if (md5_str != NULL)
     {
         *md5_str = '\0';
-        md5_str++;
+        md5_str++;          /* MD5 目前不参与校验，保留给后面用 */
     }
-    else
+    (void)md5_str;
+
+    /* ③ ★URL 长度检查 + 拷进 URL_ABuff★
+     *   原来这一步完全没做，URL_ABuff 永远是全 0 缓冲区，
+     *   CAT1_OTA 拿着空字符串去发 AT$HTTPPARA，必然失败 */
+    url_len = (u32)strlen(url);
+    if (url_len == 0 || url_len > OTA_URL_LEN)
     {
-        return 1;
-    }
-    sscanf(size_str, "%d", &BemfaInfoCB.OTA_firelen);
-    if (strlen(md5_str) != BemfaInfoCB.OTA_firelen)
-    {
+        Usart1_SendString("[OTA] URL 长度非法\r\n");
         return 2;
     }
+    strcpy((char *)URL_ABuff, url);
+
+    /* ④ ★固件大小解析 + 范围检查★ */
+    BemfaInfoCB.OTA_firelen = (u32)atoi(size_str);
+    if (BemfaInfoCB.OTA_firelen == 0)
+    {
+        Usart1_SendString("[OTA] 固件大小为 0\r\n");
+        return 3;
+    }
+    if (BemfaInfoCB.OTA_firelen > FLASH_A_SIZE)
+    {
+        Usart1_SendString("[OTA] 固件超过 480KB，拒绝\r\n");
+        return 3;
+    }
+
+    Usart1_SendString("[OTA] URL=");
+    Usart1_SendString((char *)URL_ABuff);
+    Usart1_SendString("\r\n");
+
     return 0;
 }
 
@@ -622,18 +713,18 @@ u8 CAT1_SendMQTTPacket(u8 *buf, u16 len)
      * 手册没给明确响应，常见是 +CIPSEND: <len> 或 SEND OK
      * 这里等 5 秒，只要收到任何响应就算成功
      *------------------------------------------------*/
-    ret = CAT1_SendAT("", "CIPSEND", 5000);
-
-    /* ★ 注意：CAT1_SendAT("") 会多发一个空指令的 \r\n
-     *   如果实测发现多余，改成下面这种"只等不收"的写法：
-     *
-     *   usart3_value.flag = 0;
-     *   usart3_value.count = 0;
-     *   for (i = 0; i < 50; i++) {
-     *       delay_ms(100);
-     *       if (usart3_value.flag) break;
-     *   }
-     */
+    usart3_value.flag = 0;
+    usart3_value.count = 0;
+    u16 i;
+    //等待响应或超时
+    for(i = 0; i < 50; i++)
+    {
+        delay_ms(100);
+        if(usart3_value.flag)
+        {
+            break;
+        }
+    }
 
     return 0; /* 即使没等到响应也返回成功，避免误判 */
 }

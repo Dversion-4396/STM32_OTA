@@ -1,4 +1,6 @@
 ﻿#include "eeprom.h"
+#include "usart.h"
+
 u8 EEPROM_WriteByte(u8 eeprom_addr, u8 reg_addr, u8 data)
 {
     u8 retry = I2C_RETRY_COUNT;
@@ -138,4 +140,50 @@ u8 EEPROM_ReadByte(u8 eeprom_addr, u8 reg_addr)
     }
     return 0;
     
+}
+
+/*
+    从 AT24C02 读出整个 BemfaInfoCB（99 字节）
+ */
+u8 EEPROM_ReadInfo(void)
+{
+    u8 i;
+    u8 *p = (u8 *)&BemfaInfoCB;
+    memset(&BemfaInfoCB, 0, sizeof(BemfaInfoCB));
+    for (i = 0; i < sizeof(BemfaInfoCB); i++)
+    {
+        p[i] = EEPROM_ReadByte(EEPROM_AT24C02_ADDR, i);
+        delay_ms(5);
+    }
+
+    /* 判断是否为首次启动 */
+    if (BemfaInfoCB.valid_flag != VALID_BEMFA_DATA) /* 0xDD */
+    {
+        memset(&BemfaInfoCB, 0, sizeof(BemfaInfoCB));
+        BemfaInfoCB.valid_flag = 0;
+        Usart1_SendString("[EEPROM] 参数无效，需要重新配置\r\n");
+        return 1;
+    }
+
+    Usart1_SendString("[EEPROM] 参数有效\r\n");
+    return 0;
+}
+
+/*
+  把整个 BemfaInfoCB（99 字节）写进 AT24C02
+*/
+u8 EEPROM_SaveInfo(void)
+{
+    u8 i;
+    u8 *p = (u8 *)&BemfaInfoCB;
+    for (i = 0; i < sizeof(BemfaInfoCB); i++)
+    {
+        if (EEPROM_WriteByte(EEPROM_AT24C02_ADDR, i, p[i]) != I2C_ACK)
+        {
+            return 1;
+        }
+        delay_ms(5);
+    }
+    Usart1_SendString("EEPROM SAVE INFO DONE !!!\r\n");
+    return 0;
 }

@@ -472,6 +472,7 @@ void EEPROM_ReadInfo(void)
         delay_ms(5); // 等待 5ms，确保读取完成
     }
 
+    // 判断是否为首次启动
     if (BemfaInfoCB.valid_flag != VALID_BEMFA_DATA) /* 0xDD */
     {
         /* 参数无效：首次上电 / EEPROM 未配置 / 数据损坏 */
@@ -535,6 +536,16 @@ u8 EEPROM_SaveInfo(void)
 u8 AliCer_Inspect(u8 *data)
 {
     /* TODO【B】：实现 */
+    /* 临时：把 UID 和主题写进 EEPROM（只跑一次，写完注释掉） */
+    memset(&BemfaInfoCB, 0, sizeof(BemfaInfoCB));
+    BemfaInfoCB.valid_flag = VALID_BEMFA_DATA;
+    strcpy((char *)BemfaInfoCB.UID_Buff, "a0f83060ae0a4750a09d1607611f3b32");
+    strcpy((char *)BemfaInfoCB.Topic_Buff, "123"); 
+    strcpy((char *)BemfaInfoCB.Version_ABuff, "1.0.0");
+    BemfaInfoCB.OTA_firelen = 0;
+    BemfaInfoCB.OTA_flag = 0;
+    EEPROM_SaveInfo();
+
     return 5;
 }
 

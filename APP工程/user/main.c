@@ -57,7 +57,6 @@
 #include "spi.h"
 #include "cat1.h"
 #include "mqtt.h"
-#define TEST_URL "http://httpbin.org/get" // TODO [A] 测试阶段用
 /*=====================================================================
  * 全局变量定义（★只能在这里定义一次，其他文件用 extern 引用★）
  *
@@ -71,45 +70,127 @@ u8 URL_ABuff[OTA_URL_LEN + 1]; /* OTA 下载地址缓冲区 */
 u32 ConnectTimer = 0;          /* 连上服务器后的计时（秒） */
 u32 PingTimer = 0;             /* 上次发 PING 的时间（秒） */
 
+static u16 U3_SkipTcpPrefix(u8 *data, u16 len)
+{
+    u16 pos = 0;
+    while (pos < len && (data[pos] == '\r' || data[pos] == '\n'))
+    {
+        pos++;
+    }
 
+    while (pos < len && data[pos] == '+')
+    {
+        u16 p = pos;
+        u16 after_nl = 0xFFFF;
+        u16 after_colon = 0xFFFF;
+
+        // 找 换行 或 冒号
+        while (p < len)
+        {
+            if (data[p] == '\n' && after_nl == 0xFFFF)
+            {
+                after_nl = p + 1;
+            }
+            if (data[p] == ':' && after_colon == 0xFFFF)
+            {
+                after_colon = p + 1;
+            }
+
+            p++;
+        }
+
+        if (after_nl != 0xFFFF && after_colon != 0xFFFF)
+        {
+            pos = (after_nl > after_colon) ? after_nl : after_colon;
+        }
+        else if (after_nl != 0xFFFF)
+        {
+            pos = after_nl;
+        }
+        else if (after_colon != 0xFFFF)
+        {
+            pos = after_colon;
+        }
+        else
+        {
+            // 没有找到需要剥离的内容，返回原始长度
+            return len;
+        }
+
+        while (pos < len && (data[pos] == '\r' || data[pos] == '\n'))
+        {
+            pos++;
+        }
+    }
+
+    return pos;
+}
+
+// 收到 4G 模块的报文，判断是什么事件
 void U3_EventDispatch(u8 *data, u16 len)
 {
-   
-    if (data == NULL || len == 0) return;
 
-    /* 判断是不是 MQTT 报文（看第一个字节的高 4 位，低 4 位是标志位） */
-    if ((data[0] & 0xF0) == 0x20 ||     /* CONNACK  */
-        (data[0] & 0xF0) == 0x30 ||     /* PUBLISH  */
-        (data[0] & 0xF0) == 0x40 ||     /* PUBACK   */
-        (data[0] & 0xF0) == 0x90 ||     /* SUBACK   */
-        (data[0] & 0xF0) == 0xD0)       /* PINGRESP */
+    // 承接得出的 TCP 前缀长度
+    u16 off;
+
+    // 承接剥离后的数据
+    u8 *pkt;
+
+    // 剥离后的数据长度
+    u16 pkt_len;
+
+    if (data == NULL || len == 0)
     {
-        U2PassiveEvent(data, len);
+        return;
     }
+
+    off = U3_SkipTcpPrefix(data, len);
+    if (off >= len)
+    {
+        Usart1_SendString("U3_EventDispatch: 剥离后没有数据\r\n");
+        return;
+    }
+    
+    pkt = data + off;
+    pkt_len = len - off;
+    /* 判断是不是 MQTT 报文（看第一个字节的高 4 位，低 4 位是标志位） */
+    if ((pkt[0] & 0xF0) == 0x20||
+        (pkt[0] & 0xF0) == 0x30||
+        (pkt[0] & 0xF0) == 0x40||
+        (pkt[0] & 0xF0) == 0x90||
+        (pkt[0] & 0xF0) == 0xD0)
+    {
+        U2PassiveEvent(pkt, pkt_len);
+    }
+
     /* 其他情况（AT 应答）不处理，CAT1_SendAT 已经处理过了 */
 }
 
-
+// 处理云端下发的 OTA 事件
 void ActiveEvent(void)
 {
-    
+    // 如果收到的指令是 OTA 事件
     if (SysEventFlag & OTA_EVENT)
     {
         SysEventFlag &= ~OTA_EVENT;
 
         if (CAT1_OTA(URL_ABuff, BemfaInfoCB.OTA_firelen) == 0)
         {
+            // 将事件处理标志位清零，后续跳转到 APP 区域
             BemfaInfoCB.OTA_flag = BOOT_STA_O;
             EEPROM_SaveInfo();
         }
+
+        // 如果失败则复位到 Bootloder 区域 等待下一次 OTA 事件
         NVIC_SystemReset();
     }
+
+    // 如果收到的指令是 MQTT 连接事件
     if (SysEventFlag & CONNECT_START)
     {
         SysEventFlag &= ~CONNECT_START;
         MQTT_ConnectBemfa();
     }
-    
 }
 
 /*=====================================================================
@@ -121,8 +202,8 @@ void ActiveEvent(void)
  *====================================================================*/
 int main(void)
 {
-	  __enable_irq(); 
-    u8 ret; /* CAT1_SendAT 的返回值：0=成功 1=超时 */
+    __enable_irq();
+    static u8 VersionSent = 0; /* 版本号只上报一次 */
 
     /*---------- 1. 初始化调试串口（必须最先）----------*/
     Usart1_Init(USART1_BRR);
@@ -144,14 +225,15 @@ int main(void)
     {
         Usart1_SendString("GPRS 激活失败，检查 SIM 卡和信号\r\n");
     }
-    if (CAT1_HttpInit(TEST_URL))
-    {
-        Usart1_SendString("[HTTP] 初始化失败\r\n");
-    }
+
 
     /*---------- 5. 各模块初始化 ----------*/
     /* TODO【D】：EEPROM 和 SPI Flash 初始化 */
-    /*
+
+    // 初始化 I2C 和 SPI
+
+    I2C_GPIO_Init();
+    SPI2_Init();
     if (EEPROM_ReadInfo() != 0)
     {
         Usart1_SendString("EEPROM 读取失败\r\n");
@@ -160,7 +242,6 @@ int main(void)
     {
         Usart1_SendString("W25Q128 初始化失败\r\n");
     }
-    */
 
     /*=================================================================
      * 【版本 B】云端提交的 MQTT 连接（#if 0 包住，先不启用）
@@ -187,7 +268,7 @@ int main(void)
 #endif
 
     /*---------- 6. 主循环 ----------*/
-    Usart1_SendString("进入主循环\r\n");
+    Usart1_SendString("进入 APP \r\n");
 
     while (1)
     {
@@ -201,13 +282,13 @@ int main(void)
          *================================================================*/
 
         /*---------- 【版本 A】D 的框架版（暂时注释）----------*/
-        /*
+
         if (usart3_value.flag)
         {
             usart3_value.flag = 0;
             U3_EventDispatch(usart3_value.data, usart3_value.count);
+            usart3_value.count = 0;
         }
-        */
 
         /*---------- 【版本 B】云端提交版（#if 0 包住）----------
          * 和版本 A 的差别：
@@ -227,17 +308,22 @@ int main(void)
         ActiveEvent();
 
         /* TODO【C】：MQTT 心跳保活 */
-        /*
         if (SysEventFlag & CONNECT_EVENT)
         {
+            /* 连上后上报一次版本号（OTA 流程第一步） */
+            if (VersionSent == 0)
+            {
+                VersionSent = 1;
+                CAT1_PropertyVersion();
+            }
+
             ConnectTimer++;
-            if (ConnectTimer - PingTimer >= 30)
+            if (ConnectTimer - PingTimer >= 3000)
             {
                 PingTimer = ConnectTimer;
                 MQTT_PingREQ();
             }
         }
-        */
 
         delay_ms(10);
     }

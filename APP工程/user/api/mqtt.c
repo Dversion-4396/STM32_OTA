@@ -93,22 +93,37 @@ void MQTT_Init(void)
      *=================================================================
      * 本实现：ClientID / Username / Password 全部填私钥（方式一）
      *================================================================*/
-    sprintf(Bemfa_mqtt.ClientID, USERNAME_KEY);
-    sprintf(Bemfa_mqtt.Username, USERNAME_KEY);
-    sprintf(Bemfa_mqtt.Passward, USERNAME_KEY);
+    /* ★优先用 EEPROM 里的参数；没有（首次上电）才退回宏里的测试值★ */
+    if (BemfaInfoCB.valid_flag != VALID_BEMFA_DATA ||
+        BemfaInfoCB.UID_Buff[0] == '\0')
+    {
+        Usart1_SendString("[MQTT] EEPROM 无有效参数，用测试值\r\n");
+
+        sprintf(Bemfa_mqtt.ClientID, USERNAME_KEY);
+        sprintf(Bemfa_mqtt.Username, USERNAME_KEY);
+        sprintf(Bemfa_mqtt.Passward, USERNAME_KEY);
+
+        strcpy(Bemfa_mqtt.Stopic_Buff[0], TOPIC_1);
+        strcpy(Bemfa_mqtt.Stopic_Buff[1], TOPIC_2);
+    }
+    else
+    {
+        Usart1_SendString("[MQTT] 使用 EEPROM 参数\r\n");
+
+        /* 巴法云方式一：ClientID / Username / Password 全填私钥（UID） */
+        sprintf(Bemfa_mqtt.ClientID, "%s", (char *)BemfaInfoCB.UID_Buff);
+        sprintf(Bemfa_mqtt.Username, "%s", (char *)BemfaInfoCB.UID_Buff);
+        sprintf(Bemfa_mqtt.Passward, "%s", (char *)BemfaInfoCB.UID_Buff);
+
+        /* 主题：Topic_Buff 里存的是 OTA 主题名，
+         * 普通消息主题在它后面拼 "_msg" */
+        sprintf(Bemfa_mqtt.Stopic_Buff[0], "%s", (char *)BemfaInfoCB.Topic_Buff);
+        sprintf(Bemfa_mqtt.Stopic_Buff[1], "%s_msg", (char *)BemfaInfoCB.Topic_Buff);
+    }
 
     sprintf(Bemfa_mqtt.ServerIP, SERVER_IP);
     Bemfa_mqtt.ServerPort = SERVER_PORT;
 
-    /*---------- 订阅 Topic ----------
-     * 巴法云控制台里创建的主题，直接用名字，不需要拼 UID 后缀。
-     *
-     * ★ 注意：这里的 "123" 和 "qwe" 是 C 测试时用的临时主题名 ★
-     *   正式版应该从 EEPROM 的 BemfaInfoCB.Topic_Buff 读，
-     *   或者按 OTA 需求拼成 "ota{uid}"。
-     *----------------------------------------------------------------*/
-    strcpy(Bemfa_mqtt.Stopic_Buff[0], TOPIC_1);
-    strcpy(Bemfa_mqtt.Stopic_Buff[1], TOPIC_2);
     strcpy(Bemfa_mqtt.Stopic_Buff[2], "");
 }
 
@@ -200,7 +215,7 @@ u8 MQTT_ConnectBemfa(void)
      * 三个空字符串 = APN/用户名/密码，留空用 SIM 卡默认
      *------------------------------------------------*/
     Usart1_SendString("[MQTT] 1.配置APN\r\n");
-    ret = CAT1_SendAT("AT+QICSGP=1,1,\"\",\"\",\"\"", "OK", 10000);
+    ret = CAT1_SendAT("AT+QICSGP=1,1,\"CMNET\",\"\",\"\",1", "OK", 10000);
     if (ret != 0)
     {
         Usart1_SendString("[MQTT] APN配置失败\r\n");
@@ -558,8 +573,17 @@ void MQTT_PingREQ(void)
 void U2PassiveEvent(u8 *data, u16 len)
 {
     /* TODO【C】：实现 */
-    if (data[0] == 0x20)
+    if (data == NULL || len < 2)
     {
+        return;
+    }
+
+    if ((data[0] & 0xF0) == 0x20)
+    {
+        if (len < 4)
+        {
+            return;
+        }
         if (data[3] == 0)
         {
             SysEventFlag |= CONNECT_EVENT;
@@ -587,38 +611,66 @@ void U2PassiveEvent(u8 *data, u16 len)
             }
         }
     }
-    else if (data[0] == 0x90)
+    else if (data[0] == 0x90) // SUBACK : 90 >> 剩余长度 + 报文标识符 + 返回码
     {
         u8 i = 0;
-        for (i; i < len; i++)
+        u8 ok = 1;
+        if (len < 5)
         {
-            if (data[i] != 0x00)
+            Usart1_SendString("订阅确认报文太短\r\n");
+            return;
+        }
+
+        for (i = 4; i < len; i++)
+        {
+            if (data[i] == 0x80)
             {
                 Usart1_SendString("订阅失败\r\n");
+                ok = 0;
                 break;
             }
         }
-        if (i == len)
+        if (ok)
         {
             Usart1_SendString("订阅成功\r\n");
         }
+        else
+        {
+            Usart1_SendString("订阅失败\r\n");
+        }
     }
     /// 发布确认 (QoS 1 才有)，咱订阅主题全部使用Qos0，对我们没用，不处理
-    else if (data[0] == 0x40)
+    else if ((data[0] & 0xF0) == 0x40)
     {
         ;
     }
-    else if (data[0] == 0xD0)
+    else if ((data[0] & 0xF0) == 0xD0)
     {
-        SysEventFlag &= PING_SENT;
+        // 清除 PING_SENT 标志，说明连接正常
+        SysEventFlag &= ~PING_SENT;
+        SysEventFlag &= ~PING_CHECK;
     }
-    else if (data[0] == 0x30)
+    else if ((data[0] & 0xF0) == 0x30)
     {
         MQTT_DealPushdata_Qs0(data, len);
-        if (strcmp(Bemfa_mqtt.cmdbuff, "123") == 0)
+        if (strcmp(MQTT_RxTopic, Bemfa_mqtt.cmdbuff[0]) == 0)
         {
-            CAT1_ParseOTA(Bemfa_mqtt.cmdbuff);
-            SysEventFlag |= OTA_EVENT;
+            if (CAT1_ParseOTA(Bemfa_mqtt.cmdbuff) == 0)
+            {
+                SysEventFlag |= OTA_EVENT;
+                Usart1_SendString(" [MQTT] 收到 OTA 命令\r\n");
+            }
+            else
+            {
+                Usart1_SendString(" [MQTT] OTA 命令解析失败\r\n");
+            }
+        }
+        else
+        {
+            /* 普通主题 -> 只打印 */
+            Usart1_SendString("[MQTT] 收到消息: ");
+            Usart1_SendString(Bemfa_mqtt.cmdbuff);
+            Usart1_SendString("\r\n");
         }
     }
 }
@@ -643,7 +695,14 @@ void U2PassiveEvent(u8 *data, u16 len)
  *====================================================================*/
 void CAT1_PropertyVersion(void)
 {
-    /* TODO【C】：实现 */
+    char buf[64];
+
+    sprintf(buf, "ver:%s", (char *)BemfaInfoCB.Version_ABuff);
+    Usart1_SendString("[MQTT] 上报版本: ");
+    Usart1_SendString(buf);
+    Usart1_SendString("\r\n");
+
+    MQTT_PublishQs0(Bemfa_mqtt.Stopic_Buff[1], buf, (int)strlen(buf));
 }
 
 /*=====================================================================
@@ -674,9 +733,84 @@ void CAT1_PropertyPost(char *postdata)
  *
  * 功能：从 PUBLISH 报文里提取出 JSON 载荷，存到 Bemfa_mqtt.cmdbuff
  *=====================================================================*/
+
+/* TODO【C】：从 36 号工程移植 */
 void MQTT_DealPushdata_Qs0(u8 *data, u16 len)
 {
-    /* TODO【C】：从 36 号工程移植 */
-    u16 topiclen = data[2] << 8 | data[3];
-    memcpy(Bemfa_mqtt.cmdbuff, data + 4 + topiclen, len - 4 - topiclen);
+    u16 i = 1;
+    u32 remain = 0;
+    u32 mul = 1;
+    u16 topiclen;
+    u16 payload_len;
+    u8 b;
+
+    /* 先清空，防止上一帧的内容残留 */
+    Bemfa_mqtt.cmdbuff[0] = '\0';
+    MQTT_RxTopic[0] = '\0';
+
+    if (data == NULL || len < 2)
+    {
+        return;
+    }
+
+    /* ① 解析"剩余长度"（MQTT 的变长编码，每字节低 7 位，最高位是延续位） */
+    while (1)
+    {
+        if (i >= len)
+        {
+            return;
+        }
+        b = data[i];
+        i++;
+        remain += (u32)(b & 0x7F) * mul;
+        if ((b & 0x80) == 0)
+        {
+            break;
+        }
+        mul *= 128;
+        if (mul > (128UL * 128UL * 128UL))
+        {
+            return; /* 剩余长度超过 4 字节，非法 */
+        }
+    }
+    (void)remain;
+
+    /* ② 取 Topic 长度（2 字节大端） */
+    if ((u16)(i + 2) > len)
+    {
+        return;
+    }
+    topiclen = (u16)(((u16)data[i] << 8) | (u16)data[i + 1]);
+    i += 2;
+
+    /* ③ ★关键：校验 Topic 长度没超出缓冲区★
+     *   原来没这一步，topiclen 是攻击者可控的，
+     *   len - 4 - topiclen 会下溢成 6553x，memcpy 直接踩爆 RAM */
+    if ((u32)i + (u32)topiclen > (u32)len)
+    {
+        return;
+    }
+
+    /* ④ 拷贝 Topic（带长度保护） */
+    if (topiclen >= TOPIC_SIZE)
+    {
+        topiclen = TOPIC_SIZE - 1;
+    }
+    memcpy(MQTT_RxTopic, data + i, topiclen);
+    MQTT_RxTopic[topiclen] = '\0';
+
+    /* ⑤ 剩余的就是载荷 */
+    i += topiclen;
+    if (i >= len)
+    {
+        return; /* 没有载荷（Topic 消息体为空） */
+    }
+
+    payload_len = (u16)(len - i);
+    if (payload_len > (sizeof(Bemfa_mqtt.cmdbuff) - 1))
+    {
+        payload_len = (u16)(sizeof(Bemfa_mqtt.cmdbuff) - 1);
+    }
+    memcpy(Bemfa_mqtt.cmdbuff, data + i, payload_len);
+    Bemfa_mqtt.cmdbuff[payload_len] = '\0'; /* ★补 NUL，否则 strcmp 越界★ */
 }

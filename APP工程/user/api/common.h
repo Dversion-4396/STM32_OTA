@@ -122,7 +122,7 @@ typedef unsigned int   u32;
  *   编译后约 12~18KB，留 32KB 有充足余量。
  *   如果超过 32KB，必须调整 FLASH_BOOT_PAGE_NUM 并同步改 APP 的 IROM1。
  *===================================================================*/
-#define FLASH_BASE_ADDR       0x08000000        /* 片内 Flash 起始地址 */
+#define FLASH_BASE_ADDR       0x08008000        /* 片内 Flash 起始地址 */
 #define FLASH_PAGE_SIZE       2048              /* F103ZET6 页大小 2KB */
 #define FLASH_TOTAL_PAGES     256               /* 512KB / 2KB = 256 页 */
 
