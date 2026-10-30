@@ -365,7 +365,6 @@ u8 CAT1_HttpInit(char *url)
     return 0;
 }
 
-
 u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
 {
     char *p;
@@ -434,7 +433,6 @@ u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
     *outlen = dlen;
     return 0;
 }
-
 
 u8 CAT1_OTA(char *url, u32 fw_len)
 {
@@ -567,16 +565,39 @@ u8 CAT1_OTA(char *url, u32 fw_len)
     return 0;
 }
 
-
 u8 CAT1_ParseOTA(char *json)
 {
-    
-    return 1;
+    /* TODO【C】：实现 */
+    char *onedouhao = strchr(json, ',');
+    if (onedouhao == NULL)
+    {
+        return 1;
+    }
+    *onedouhao = '\0';
+    char *url = json;
+    char *size_str = onedouhao + 1;
+    char *md5_str = strchr(size_str, ',');
+    if (md5_str != NULL)
+    {
+        *md5_str = '\0';
+        md5_str++;
+    }
+    else
+    {
+        return 1;
+    }
+    sscanf(size_str, "%d", &BemfaInfoCB.OTA_firelen);
+    if (strlen(md5_str) != BemfaInfoCB.OTA_firelen)
+    {
+        return 2;
+    }
+    return 0;
 }
+
 u8 CAT1_SendMQTTPacket(u8 *buf, u16 len)
 {
     char cmd[64];
-    u8   ret;
+    u8 ret;
 
     /*---------- ① 告诉模块要发多少字节 ----------*/
     sprintf(cmd, "AT+CIPSEND=0,%d", len);
@@ -614,5 +635,5 @@ u8 CAT1_SendMQTTPacket(u8 *buf, u16 len)
      *   }
      */
 
-    return 0;       /* 即使没等到响应也返回成功，避免误判 */
+    return 0; /* 即使没等到响应也返回成功，避免误判 */
 }
