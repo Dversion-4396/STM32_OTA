@@ -25,8 +25,23 @@
  *====================================================================*/
 u8 Flash_ErasePage(u32 addr)
 {
-    /* TODO【B】：实现 */
-    return 1;
+    /// 检查地址是否对齐
+    if (addr % FLASH_PAGE_SIZE)
+    {
+        return 1;
+    }
+    /// 检查地址是否在有效范围内
+    if (addr < FLASH_A_ADDR || addr >= FLASH_A_ADDR + FLASH_A_SIZE)
+    {
+        return 1;
+    }
+
+    FLASH_Status fl;
+    /// 解锁 FLASH
+    FLASH_Unlock();
+    FLASH_ClearFlag(FLASH_FLAG_EOP | FLASH_FLAG_PGERR | FLASH_FLAG_WRPRTERR);
+
+    return 0;
 }
 
 /*=====================================================================

@@ -98,7 +98,12 @@ u32 PingTimer = 0;             /* 上次发 PING 的时间（秒） */
 void U3_EventDispatch(u8 *data, u16 len)
 {
     /* TODO【D】：实现 */
-
+    if (len > 0 && (data[0] == 0x20 || data[0] == 0x30 ||
+                    data[0] == 0x40 || data[0] == 0x90 ||
+                    data[0] == 0xD0))
+    {
+        U2PassiveEvent(data, len);
+    }
     /* 临时屏蔽未使用参数警告 */
     (void)data;
     (void)len;
@@ -181,7 +186,6 @@ int main(void)
     {
         Usart1_SendString("[HTTP] 初始化失败\r\n");
     }
-
     /*---------- 5. 各模块初始化 ----------*/
     /* TODO【D】：EEPROM 和 SPI Flash 初始化 */
     /*
@@ -194,6 +198,16 @@ int main(void)
         Usart1_SendString("W25Q128 初始化失败\r\n");
     }
     */
+    /*连接 MQTT 服务器*/
+    MQTT_Init();
+    if(MQTT_ConnectBemfa()==0)
+    {
+        Usart1_SendString("连接成功\r\n");
+    }
+    else
+    {
+        Usart1_SendString("连接失败\r\n");
+    }
 
     /*---------- 6. 主循环 ----------*/
     Usart1_SendString("进入主循环\r\n");
@@ -201,17 +215,13 @@ int main(void)
     while (1)
     {
         /* TODO【D】：处理 4G 收到的数据 */
-        /*
         if (usart3_value.flag)
         {
             usart3_value.flag = 0;
             U3_EventDispatch(usart3_value.data, usart3_value.count);
         }
-        */
-
         /* 处理主动事件（OTA 下载 / MQTT 连接等） */
         ActiveEvent();
-
         /* TODO【C】：MQTT 心跳保活 */
         /*
         if (SysEventFlag & CONNECT_EVENT)
@@ -224,7 +234,7 @@ int main(void)
             }
         }
         */
-
         delay_ms(10);
+
     }
 }
