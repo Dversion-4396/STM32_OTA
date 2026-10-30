@@ -39,6 +39,10 @@
 /*==================== 全局变量 ====================*/
 MQTT_CB Bemfa_mqtt;
 
+/* 收到 PUBLISH 报文里的主题名（由 MQTT_DealPushdata_Qs0 填）。
+ * 声明在 mqtt.h:69，这里给定义。 */
+char MQTT_RxTopic[TOPIC_SIZE];
+
 /*=====================================================================
  * 函数：MQTT_Init
  * 负责：C
@@ -653,7 +657,10 @@ void U2PassiveEvent(u8 *data, u16 len)
     else if ((data[0] & 0xF0) == 0x30)
     {
         MQTT_DealPushdata_Qs0(data, len);
-        if (strcmp(MQTT_RxTopic, Bemfa_mqtt.cmdbuff[0]) == 0)
+        /* ★ 判断依据是【收到的 Topic 名】是否等于【订阅的 OTA 主题名】。
+         *   原来是拿 cmdbuff[0]（载荷的第一个字符，是个 char）去比，
+         *   既类型不匹配（strcmp 要 char*），语义也错位。★ */
+        if (strcmp(MQTT_RxTopic, Bemfa_mqtt.Stopic_Buff[0]) == 0)
         {
             if (CAT1_ParseOTA(Bemfa_mqtt.cmdbuff) == 0)
             {
