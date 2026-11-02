@@ -296,6 +296,62 @@ int main(void)
         g_ui_status.eeprom_ok = 1;
         LCD_Log("EEPROM OK");
     }
+
+    /*---------- 7.1 首次上电写默认参数 ----------*/
+    /*
+        ★ 为什么要这一段 ★
+
+        EEPROM_ReadInfo() 只是"把 EEPROM 里的 99 字节读进 BemfaInfoCB"，
+        它不会写。而原来唯一的写入点在 BootLoader 的 AliCer_Inspect() 里，
+        那个函数现在没有任何调用点（菜单 [3] 改成了"查看当前状态"），
+        所以新板子/擦过 EEPROM 的板子，读出来永远是：
+
+            valid_flag != 0xDD  →  EEPROM_ReadInfo() 把整个结构体 memset 成 0
+                                →  UID / Topic / Version 全是空串
+                                →  MQTT_Init() 只能退回 mqtt.h 里的硬编码测试值
+                                →  CAT1_PropertyVersion() 发出去的 payload 是 "ver:"
+
+        这里补上：只要参数无效，就把下面这套默认值写进 EEPROM 一次。
+
+        ★ 以后换版本号，就改下面 Version_ABuff 那一行 ★
+
+        注意：改完源码重新烧录，EEPROM 里存的还是旧值（valid_flag 仍是 0xDD），
+              这段不会重跑。想让它真的重写一次，两个办法：
+                ① 临时把下面的 if 条件改成 if (1)，烧一次，写完再改回来
+                ② 换一块没写过的 EEPROM / 手动擦掉 AT24C02 前 99 字节
+    */
+    if (BemfaInfoCB.valid_flag != VALID_BEMFA_DATA)
+    {
+        Usart1_SendString("[EEPROM] 参数无效，写入默认值\r\n");
+
+        memset(&BemfaInfoCB, 0, sizeof(BemfaInfoCB));
+        BemfaInfoCB.valid_flag = VALID_BEMFA_DATA;                              /* 0xDD = 参数有效 */
+        strcpy((char *)BemfaInfoCB.UID_Buff,     "a0f83060ae0a4750a09d1607611f3b32"); /* 巴法云 UID，32 位 */
+        strcpy((char *)BemfaInfoCB.Topic_Buff,   "123");                        /* 订阅的 Topic 名字 */
+        strcpy((char *)BemfaInfoCB.Version_ABuff, "1.0.0");                     /* ★ 版本号改这里，最长 23 字符 */
+        BemfaInfoCB.OTA_firelen = 0;                                            /* 没有待搬运的固件 */
+        BemfaInfoCB.OTA_flag    = 0;                                            /* 0x5AA5C33C 才是"待升级" */
+
+        if (EEPROM_SaveInfo() != 0)
+        {
+            Usart1_SendString("[EEPROM] 默认值写入失败\r\n");
+            LCD_Log("EEPROM wr FAIL");
+        }
+        else
+        {
+            Usart1_SendString("[EEPROM] 默认值写入完成\r\n");
+            LCD_Log("EEPROM default");
+        }
+    }
+    else
+    {
+        /* 参数有效，打印一下当前版本号，方便核对是不是想要的版本 */
+        Usart1_SendString("[EEPROM] 当前版本号: ");
+        Usart1_SendBuffer((char *)BemfaInfoCB.Version_ABuff,
+                          (u16)strlen((char *)BemfaInfoCB.Version_ABuff));
+        Usart1_SendString("\r\n");
+    }
+
     if (W25Q128_Init() != 0)
     {
         Usart1_SendString("W25Q128 初始化失败\r\n");
