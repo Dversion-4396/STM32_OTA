@@ -281,7 +281,11 @@ void Load_APP(u32 app_addr)
         return;
     }
     /// 检查栈顶是否有效
-    if ((stack_top & 0x2FFE0000) != 0x20000000)
+    /* ★2026-11-02 改：原来是 (stack_top & 0x2FFE0000) != 0x20000000，
+     * 这个掩码有洞 —— 0x60000000 & 0x2FFE0000 也等于 0x20000000，
+     * 明显不在 SRAM 里的地址能骗过检查。改成直接比范围：
+     * F103ZE 的 SRAM 是 0x20000000 ~ 0x2000FFFF（64KB）。★ */
+    if (stack_top < 0x20000000 || stack_top > 0x20010000)
     {
         /// 打印错误信息
         Usart1_SendString("LOAD APP: 无效栈顶\r\n");
@@ -368,6 +372,28 @@ u8 Boot_VerifyFirmware(u32 fw_total_len, u32 *out_real_len)
         Usart1_SendString("BOOT VERIFY FIRMWARE: 无效输出指针\r\n");
         return 1;
     }
+
+    /*=================================================================
+     * ★2026-11-02 新增：固件总大小上限检查（防变砖）★
+     *
+     * 为什么要加在这里、而不是等 Boot_CopyFirmware 里再查：
+     *   ActiveEvent() 的顺序是
+     *       Boot_VerifyFirmware() → Flash_EraseApp() → Boot_CopyFirmware()
+     *   Flash_EraseApp() 会把 A 区 240 页全擦掉。如果固件超限，
+     *   Boot_CopyFirmware() 里那句 if(fw_len > FLASH_A_SIZE) return 1
+     *   确实会拒绝，但那时 A 区已经擦空了 —— 设备直接变砖，只能拆机烧录。
+     *
+     *   所以必须把大小检查提到「擦除之前」，也就是这里。
+     *
+     * 上限取 FLASH_A_SIZE（480KB）。W25Q128 有 16MB，本身放得下更大，
+     * 但片内 APP 区只有 480KB，超了搬不进去。
+     *================================================================*/
+    if (fw_total_len > FLASH_A_SIZE)
+    {
+        Usart1_SendString("BOOT VERIFY FIRMWARE: 固件超过 A 区 480KB，拒绝升级\r\n");
+        return 1;
+    }
+
     W25Q128_Read(fw_total_len - 28, buf, 28);
     if (buf[0] != 0xCD || buf[1] != 0xEF || buf[2] != 0xCD || buf[3] != 0xEF)
     {
@@ -385,6 +411,54 @@ u8 Boot_VerifyFirmware(u32 fw_total_len, u32 *out_real_len)
         Usart1_SendString("BOOT VERIFY FIRMWARE: 无效校验和\r\n");
         return 1;
     }
+
+    /*=================================================================
+     * ★2026-11-02 新增：向量表合法性检查（防搬进去一个跑不起来的固件）★
+     *
+     * 固件搬到 A 区后，Load_APP() 会读 A 区头 8 字节：
+     *   [0] 栈顶（必须落在 0x20000000 起的 64KB RAM 内）
+     *   [4] Reset_Handler（必须落在 A 区内）
+     * 但那是「搬完之后」才检查的 —— 检查不过就 return，设备卡在 BootLoader
+     * 菜单里出不来（虽然不会彻底变砖，但要人工接串口救）。
+     *
+     * 所以在搬之前先从 W25Q128 读一下这个固件的向量表，不合法就拒绝。
+     * 这一步很便宜（只读 8 字节），能拦住「下载到一半断了」「下错文件了」
+     * 「把 BootLoader 自己当 APP 传上来了」这三类。
+     *
+     * 具体判据（与 Load_APP 保持一致）：
+     *   ① 栈顶必须在 0x20000000 ~ 0x20010000 之间（F103ZE 的 64KB SRAM）
+     *   ② Reset_Handler 必须在 [FLASH_A_ADDR, FLASH_A_ADDR+FLASH_A_SIZE) 内
+     *================================================================*/
+    {
+        u8 vec[8];
+        u32 fw_stack;
+        u32 fw_reset;
+        W25Q128_Read(0, vec, 8);
+        fw_stack = (u32)vec[0] | ((u32)vec[1] << 8) | ((u32)vec[2] << 16) | ((u32)vec[3] << 24);
+        fw_reset = (u32)vec[4] | ((u32)vec[5] << 8) | ((u32)vec[6] << 16) | ((u32)vec[7] << 24);
+
+        /* ★2026-11-02 改：原来是 (stack_top & 0x2FFE0000) != 0x20000000，
+         * 这个掩码有洞 —— 0x60000000 & 0x2FFE0000 也等于 0x20000000，
+         * 一个明显不在 SRAM 里的地址能骗过检查。改成直接比范围。★ */
+        if (fw_stack < 0x20000000 || fw_stack > 0x20010000)
+        {
+            Usart1_SendString("BOOT VERIFY FIRMWARE: 固件栈顶非法，拒绝升级\r\n");
+            return 1;
+        }
+        if (fw_reset < FLASH_A_ADDR || fw_reset >= (FLASH_A_ADDR + FLASH_A_SIZE))
+        {
+            Usart1_SendString("BOOT VERIFY FIRMWARE: 固件重置向量不在 APP 区，拒绝升级\r\n");
+            return 1;
+        }
+        /* 顺手把两个值打出来，出问题时一眼就能看出是哪个不对 */
+        {
+            char hexbuf[64];
+            sprintf(hexbuf, "BOOT VERIFY FIRMWARE: 栈顶=0x%08X 复位向量=0x%08X\r\n",
+                    (unsigned int)fw_stack, (unsigned int)fw_reset);
+            Usart1_SendString(hexbuf);
+        }
+    }
+
     *out_real_len = real_len;
     Usart1_SendString("BOOT VERIFY FIRMWARE: 校验通过\r\n");
     return 0;

@@ -122,7 +122,15 @@ typedef unsigned int   u32;
  *   编译后约 12~18KB，留 32KB 有充足余量。
  *   如果超过 32KB，必须调整 FLASH_BOOT_PAGE_NUM 并同步改 APP 的 IROM1。
  *===================================================================*/
-#define FLASH_BASE_ADDR       0x08008000        /* 片内 Flash 起始地址 */
+/* ★2026-11-02 修正★
+ * 这里原来写的是 0x08008000，那是「APP 区起点」，不是「片内 Flash 起点」。
+ * 结果 FLASH_A_ADDR = 0x08008000 + 0x8000 = 0x08010000，比真实 APP 区起点
+ * 整整偏了 32KB。BootLoader 工程里这个宏是对的（0x08000000），只有 APP 工程错。
+ *
+ * 之所以一直没炸：APP 工程里没有任何代码用 FLASH_A_ADDR / FLASH_BASE_ADDR
+ * （已 grep 确认，只有 cat1.c 用了 FLASH_A_SIZE）。但以后做多 APP 分区、
+ * 或者谁想用 FLASH_A_ADDR 算地址，就会踩这个坑。现在改对。 */
+#define FLASH_BASE_ADDR       0x08000000        /* 片内 Flash 起始地址（不是 APP 区起点！） */
 #define FLASH_PAGE_SIZE       2048              /* F103ZET6 页大小 2KB */
 #define FLASH_TOTAL_PAGES     256               /* 512KB / 2KB = 256 页 */
 
@@ -133,6 +141,19 @@ typedef unsigned int   u32;
 #define FLASH_A_START_PAGE    16                /* APP 从第 16 页开始 */
 #define FLASH_A_PAGE_NUM      240               /* APP 占 240 页 */
 #define FLASH_A_SIZE          (FLASH_A_PAGE_NUM * FLASH_PAGE_SIZE)      /* 480KB */
+
+/* ★2026-11-02 新增：编译期分区自检★
+ * 上面几个宏是手算的，一旦谁改了 FLASH_BASE_ADDR 或 FLASH_BOOT_PAGE_NUM，
+ * 很容易算出个"看着对其实错"的地址，而且运行时才炸。这里在编译期就拦住：
+ *   ① FLASH_A_ADDR 必须正好等于 0x08008000（BootLoader 32KB 之后）
+ *   ② FLASH_A_SIZE 必须正好等于 480KB
+ *   ③ APP 区不能越过 512KB Flash 的末尾
+ * 用「数组长度为负就报错」的技巧做断言（C89 没有 static_assert）。
+ * 断言失败时 Keil 会报 "error: #94-D: the size of an array must be greater than zero"，
+ * 括号里那句英文就是具体哪条断言挂了。 */
+typedef char flash_part_check_a_addr[(FLASH_A_ADDR == 0x08008000) ? 1 : -1];
+typedef char flash_part_check_a_size[(FLASH_A_SIZE == (480 * 1024)) ? 1 : -1];
+typedef char flash_part_check_a_end[((FLASH_A_ADDR + FLASH_A_SIZE) == 0x08080000) ? 1 : -1];
 
 /*=====================================================================
  * 二、OTA 状态标志

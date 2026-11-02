@@ -67,7 +67,34 @@ u8 Flash_Write(u32 addr, u8 *buf, u32 len)
 {
     u32 i;
     u16 halfword;
+
+    /*=================================================================
+     * ★2026-11-02 修正：原来的越界检查只看了起始地址，没看末尾★
+     *
+     * 原来只有一句：
+     *     if (addr < FLASH_A_ADDR || addr >= FLASH_A_ADDR + FLASH_A_SIZE) return 1;
+     *
+     * 这只能保证「写的起点在 A 区内」。如果 addr 已经靠近 A 区末尾
+     * （比如 0x0807FF00），再写 2048 字节就会一路写到 0x080807FF ——
+     * 越过 A 区末尾 0x08080000，也就是写到了片内 Flash 之外
+     * （F103ZE 只有 512KB = 0x08000000~0x0807FFFF）。
+     *
+     * 后果：FLASH_ProgramHalfWord 在超出物理容量的地址上行为未定义，
+     * 轻则写失败返回错误、重则触发 bus fault。而且现在 BootLoader 的
+     * HardFault_Handler 是启动文件里的弱符号 while(1)，一旦跑飞
+     * 串口一个字都不吐，只能拆机。
+     *
+     * 正确写法（与 W25Q128_Write 里的保护同一个思路，防 u32 回绕）：
+     *     len > FLASH_A_SIZE - addr
+     * 注意不能写 addr + len > FLASH_A_ADDR + FLASH_A_SIZE ——
+     * addr 和 len 都是 u32，addr + len 本身可能溢出回绕，
+     * 溢出后又变成一个小数，检查就失效了。
+     *================================================================*/
     if (addr < FLASH_A_ADDR || addr >= FLASH_A_ADDR + FLASH_A_SIZE)
+    {
+        return 1;
+    }
+    if (len > (FLASH_A_ADDR + FLASH_A_SIZE) - addr)
     {
         return 1;
     }
