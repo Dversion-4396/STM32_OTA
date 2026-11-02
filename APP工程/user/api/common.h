@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include "i2c.h"
+#include "usart.h"
+#include "delay.h"
 #define USART1_BRR 9600
 #define USART2_BRR 115200
 #define USART3_BRR 115200

@@ -449,7 +449,12 @@ u8 CAT1_OTA(char *url, u32 fw_len)
     block = (u16)((fw_len + 65535) / 65536);
     if (block == 0)
         block = 1;
-
+        
+    if (block > 256)
+    {
+        Usart1_SendString("[OTA] ★固件太大，超过 16MB\r\n");
+        return 1;
+    }
     /* ② 激活网络 */
     Usart1_SendString("[OTA] 网络激活...\r\n");
     if (CAT1_ActiveGPRS())
@@ -567,30 +572,95 @@ u8 CAT1_OTA(char *url, u32 fw_len)
 
 u8 CAT1_ParseOTA(char *json)
 {
-    /* TODO【C】：实现 */
-    char *onedouhao = strchr(json, ',');
-    if (onedouhao == NULL)
+    char *p;
+    char *url;
+    char *size_str;
+    char *md5_str;
+    u32 fw_size;
+
+    /*---------- 0. 参数检查 ----------*/
+    if (json == NULL)
     {
         return 1;
     }
-    *onedouhao = '\0';
-    char *url = json;
-    char *size_str = onedouhao + 1;
-    char *md5_str = strchr(size_str, ',');
-    if (md5_str != NULL)
+
+    /*---------- 1. 找第一个逗号，前面是 URL ----------*/
+    p = strchr(json, ',');
+    if (p == NULL)
     {
-        *md5_str = '\0';
-        md5_str++;
+        Usart1_SendString("[OTA] 格式错误：找不到逗号\r\n");
+        return 1;
+    }
+    *p = '\0';
+    url = json;
+    size_str = p + 1;
+
+    /*---------- 2. 找第二个逗号，后面是 MD5（可选）----------*/
+    p = strchr(size_str, ',');
+    if (p != NULL)
+    {
+        *p = '\0';
+        md5_str = p + 1;
     }
     else
     {
+        md5_str = NULL; /* 没有 MD5 也可以，不算错 */
+    }
+
+    /*---------- 3. 检查 URL 长度并保存 ----------*/
+    if (strlen(url) == 0)
+    {
+        Usart1_SendString("[OTA] 格式错误：URL 为空\r\n");
         return 1;
     }
-    sscanf(size_str, "%d", &BemfaInfoCB.OTA_firelen);
-    if (strlen(md5_str) != BemfaInfoCB.OTA_firelen)
+
+    if (strlen(url) > OTA_URL_LEN) /* ★ 防溢出 ★ */
     {
+        Usart1_SendString("[OTA] URL 太长，装不下\r\n");
         return 2;
     }
+
+    strcpy((char *)URL_ABuff, url); /* ★ 关键：保存 URL ★ */
+
+    /*---------- 4. 解析固件大小 ----------*/
+    fw_size = (u32)atoi(size_str);
+
+    /*---------- 5. 大小合理性检查 ----------*/
+    if (fw_size == 0)
+    {
+        Usart1_SendString("[OTA] 固件大小为 0，不对\r\n");
+        return 2;
+    }
+
+    if (fw_size > FLASH_A_SIZE) /* 480KB */
+    {
+        Usart1_SendString("[OTA] 固件太大，超过 480KB\r\n");
+        return 2;
+    }
+
+    BemfaInfoCB.OTA_firelen = fw_size;
+
+    /*---------- 6. 打印解析结果 ----------*/
+    Usart1_SendString("[OTA] ★收到升级命令★\r\n");
+    Usart1_SendString("[OTA] URL  : ");
+    Usart1_SendString((char *)URL_ABuff);
+    Usart1_SendString("\r\n");
+
+    Usart1_SendString("[OTA] 大小 : ");
+    {
+        char num[16];
+        sprintf(num, "%lu", (unsigned long)fw_size);
+        Usart1_SendString(num);
+    }
+    Usart1_SendString(" 字节\r\n");
+
+    if (md5_str != NULL)
+    {
+        Usart1_SendString("[OTA] MD5  : ");
+        Usart1_SendString(md5_str);
+        Usart1_SendString("\r\n");
+    }
+
     return 0;
 }
 

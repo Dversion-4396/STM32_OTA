@@ -2,8 +2,6 @@
 #define _EEPROM_H
 
 #include "common.h"
-#include "i2c.h"
-
 
 /**
  * @brief 写入一个字节数据到 EEPROM AT24C02 存储芯片中，
@@ -23,5 +21,12 @@ u8 EEPROM_WriteByte(u8 eeprom_addr, u8 reg_addr, u8 data);
  * @return 对应读取到的数据内容
  */
 u8 EEPROM_ReadByte(u8 eeprom_addr, u8 reg_addr);
+/// @brief 
+/// @param  
+void EEPROM_ReadInfo(void);
+/// @brief 
+/// @param  
+/// @return 
+u8 EEPROM_SaveInfo(void);
 
 #endif

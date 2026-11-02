@@ -58,11 +58,11 @@
 #define MQTT_PACKAGE_SIZE  512             /* MQTT 报文缓冲区大小 */
 
 /*=====================巴法云相关宏定义=====================*/
-#define USERNAME_KEY "a0f83060ae0a4750a09d1607611f3b32" // 巴法云平台秘钥
+#define USERNAME_KEY "64d605ff9270490d930107be4acff2ee" // 巴法云平台秘钥
 #define SERVER_IP "bemfa.com"                           // 巴法云订阅主题地址
 #define SERVER_PORT (9501)                              // 巴法云订阅主题端口号
-#define TOPIC_1 "123"                                   // 巴法云订阅主题 1
-#define TOPIC_2 "abc"                                   // 巴法云订阅主题 2
+#define TOPIC_1 "OTA"                                   // 巴法云订阅主题 1
+
 
 /*=====================================================================
  * MQTT 会话结构体

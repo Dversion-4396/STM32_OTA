@@ -103,12 +103,36 @@ void MQTT_Init(void)
     /*---------- 订阅 Topic ----------
      * 巴法云控制台里创建的主题，直接用名字，不需要拼 UID 后缀。
      *
-     * ★ 注意：这里的 "123" 和 "qwe" 是 C 测试时用的临时主题名 ★
-     *   正式版应该从 EEPROM 的 BemfaInfoCB.Topic_Buff 读，
-     *   或者按 OTA 需求拼成 "ota{uid}"。
+     *=================================================================
+     * ★ 为什么只订阅 1 个（2026-11-02 修正）★
+     *
+     *   之前订阅了 2 个（"123" 和 "abc"），是 C 在 WiFi 测试工程里
+     *   验证"多主题订阅"时留下的。
+     *
+     *   但巴法云规则：主题必须先创建才能订阅。
+     *   控制台里只建了 "123"，没建 "abc"，
+     *   所以 SUBACK 返回：
+     *     90 04 00 0B 00 80
+     *              └┬┘ └┬┘
+     *               │   └─ "abc" = 0x80（失败）
+     *               └───── "123" = 0x00（成功）
+     *
+     *   OTA 只需要一个 Topic 收升级命令，订阅 1 个就够了。
+     *
+     *=================================================================
+     * ★ 正式版应该怎么改 ★
+     *
+     *   现在用的是固定 Topic "123"（测试用）。
+     *   正式版应该按 OTA 需求拼成 "ota{uid}"，
+     *   这样不同设备有自己的 Topic，互不干扰：
+     *
+     *     sprintf(Bemfa_mqtt.Stopic_Buff[0], "ota%s", BemfaInfoCB.UID_Buff);
+     *
+     *   但要注意：BemfaInfoCB.UID_Buff 需要先从 EEPROM 读出来，
+     *   且 valid_flag == 0xDD 才有效。
      *----------------------------------------------------------------*/
-    strcpy(Bemfa_mqtt.Stopic_Buff[0], TOPIC_1);
-    strcpy(Bemfa_mqtt.Stopic_Buff[1], TOPIC_2);
+    strcpy(Bemfa_mqtt.Stopic_Buff[0], TOPIC_1);      /* "123" */
+    strcpy(Bemfa_mqtt.Stopic_Buff[1], "");
     strcpy(Bemfa_mqtt.Stopic_Buff[2], "");
 }
 
@@ -141,57 +165,6 @@ void MQTT_Init(void)
 u8 MQTT_ConnectBemfa(void)
 {
 
-#if 0
-    /*------------------------------------------------------------------
-     * 【已废弃】WiFi 版本（ESP8266）
-     *
-     * 这段是从 C 的 WiFi 测试工程（E:\桌面\STM32F103ZET6_MQTTceshi）
-     * 复制过来的原始代码，在 WiFi 模块上实测能跑通。
-     *
-     * 但本工程用的是 4G 模块，这些指令全部无效，所以屏蔽掉。
-     * 保留作为参考：可以看 MQTT 报文发送的时序安排。
-     *------------------------------------------------------------------*/
-    {
-        char at_cmd[64] = "";
-
-        Usart1_Init(USART1_BRR);
-        Usart3_Init(USART3_BRR);
-
-        Usart3_SendString("AT\r\n");
-        delay_ms(2000);
-
-        Usart3_SendString("AT+CWMODE_CUR=1\r\n");       /* WiFi STA 模式 */
-        delay_ms(2000);
-
-        Usart3_SendString("AT+CWLAP\r\n");              /* 扫描热点 */
-        delay_ms(3000);
-
-        sprintf(at_cmd, "AT+CWJAP=\"%s\",\"%s\"\r\n", AP_SSID, AP_PSK);
-        Usart3_SendBuffer(at_cmd, strlen(at_cmd));      /* 连 WiFi */
-        delay_ms(10000);
-
-        Usart3_SendString("AT+CIFSR\r\n");              /* 查 IP */
-        delay_ms(3000);
-
-        memset(at_cmd, 0, 64);
-        sprintf(at_cmd, "AT+CIPSTART=\"TCP\",\"%s\",%d\r\n",
-                MQTT_SERVER_IP_ADDR, MQTT_SERVER_PORT);
-        Usart3_SendBuffer(at_cmd, strlen(at_cmd));
-        delay_ms(2000);
-
-        Usart3_SendString("AT+CIPMODE=1\r\n");          /* 透传模式 */
-        delay_ms(2000);
-
-        Usart3_SendString("AT+CIPSEND\r\n");            /* 进透传 */
-        delay_ms(2000);
-
-        MQTT_ConectPack();
-
-        delay_ms(2000);
-        return 1;
-    }
-#endif
-
     u8 ret;
     char cmd[128];
 
@@ -210,20 +183,18 @@ u8 MQTT_ConnectBemfa(void)
         return 1;
     }
 
-    /*---------- ② 开启移动网络 ★这一步之前完全漏了★ ----------
-     * 手册：B. 开启移动网络：AT+NETOPEN
-     * 成功响应：+NETOPEN:SUCCESS
-     *------------------------------------------------*/
     Usart1_SendString("[MQTT] 2.开启移动网络\r\n");
-    ret = CAT1_SendAT("AT+NETOPEN", "NETOPEN:SUCCESS", 30000);
-    if (ret != 0)
-    {
-        Usart1_SendString("[MQTT] NETOPEN失败\r\n");
-        Usart1_SendString("[MQTT] 响应: [");
-        Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-        Usart1_SendString("]\r\n");
-        return 2;
-    }
+
+    usart3_value.flag = 0;
+    usart3_value.count = 0;
+
+    Usart3_SendString("AT+NETOPEN\r\n");
+    delay_ms(3000);
+
+    /* 打印响应，但不判断成败（902 = 已激活，也是好事） */
+    Usart1_SendString("[MQTT] NETOPEN 响应: [");
+    Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
+    Usart1_SendString("]\r\n");
 
     /*---------- ③ 建立 TCP 连接 ----------
      * 手册：C. 建立连接会话：AT+CIPOPEN=0,"TCP","ip",port
@@ -258,9 +229,14 @@ u8 MQTT_ConnectBemfa(void)
     /* 等 CONNACK（U2PassiveEvent 会处理，这里只等一会儿） */
     delay_ms(2000);
 
-    /*---------- ⑤ 订阅 Topic ----------*/
+    /*---------- ⑤ 订阅 Topic ----------
+     * ★ 只订阅 1 个 ★
+     *   OTA 只需要一个 Topic 收升级命令。
+     *   之前订阅 2 个（"123" + "abc"），但控制台只建了 "123"，
+     *   导致 SUBACK 里 "abc" 返回 0x80（失败），容易被误判。
+     *------------------------------------------------*/
     Usart1_SendString("[MQTT] 5.订阅主题\r\n");
-    MQTT_Subscribe(Bemfa_mqtt.Stopic_Buff, 2, 0); /* 内部已改成用 CIPSEND */
+    MQTT_Subscribe(Bemfa_mqtt.Stopic_Buff, 1, 0); /* 只订阅 1 个 */
 
     delay_ms(1000);
 
@@ -520,106 +496,210 @@ void MQTT_PingREQ(void)
     CAT1_SendMQTTPacket(pack, 2);
 }
 
-/*=====================================================================
- * 函数：U2PassiveEvent
- * 负责：C
- *
- * 功能：处理 4G 收到的 MQTT 报文（被动事件）
- * 参数：data - 收到的数据；len - 长度
- *
- * 要处理 5 种报文（看首字节）：
- *
- *   0x20 CONNACK  连接确认
- *        data[3] == 0  → 连接成功，置 CONNECT_EVENT 标志
- *        data[3] != 0  → 失败，打印错误码
- *                        1=协议版本不对 2=ClientID被拒 4=用户名密码错 5=未授权
- *
- *   0x90 SUBACK   订阅确认
- *        逐个检查返回码，0x00=成功，0x80=失败
- *
- *   0x40 PUBACK   发布确认（QoS 1 才有）
- *        打印一下就行，不用特殊处理
- *
- *   0xD0 PINGRESP 心跳响应
- *        清 PING_SENT 标志，说明连接正常
- *
- *   0x30 PUBLISH  ★核心★ 收到消息
- *        处理流程：
- *          ① 调 MQTT_DealPushdata_Qs0() 把载荷提取到 cmdbuff
- *          ② 判断 Topic 是不是 "ota{uid}"
- *          ③ 是的话调 CAT1_ParseOTA(cmdbuff) 解析 URL/大小/MD5
- *          ④ 解析成功 → SysEventFlag |= OTA_EVENT
- *          ⑤ 主循环的 ActiveEvent() 看到这个标志就触发下载
- *
- * ★ 巴法云和阿里云的区别 ★
- *   阿里云 OTA 是平台推固定的 JSON 格式
- *   巴法云是你在电脑/手机上往 Topic 发一条消息，格式自己定
- *====================================================================*/
 void U2PassiveEvent(u8 *data, u16 len)
 {
-    /* TODO【C】：实现 */
-    if (data[0] == 0x20)
+    u8 type;
+
+    /*---------- 参数检查 ----------*/
+    if (data == NULL || len < 2)
     {
-        if (data[3] == 0)
+        return;
+    }
+
+    /* 取报文类型（第一个字节的高 4 位） */
+    type = data[0] & 0xF0;
+
+    switch (type)
+    {
+    /*=================================================================
+     * CONNACK：连接确认
+     *
+     * 报文结构（4 字节）：
+     *   0x20      固定头
+     *   0x02      剩余长度
+     *   0x00      连接标志
+     *   XX        返回码（0 = 成功）
+     *================================================================*/
+    case 0x20:
+        if (len >= 4)
         {
-            SysEventFlag |= CONNECT_EVENT;
-            Usart1_SendString("连接成功\r\n");
+            if (data[3] == 0x00)
+            {
+                Usart1_SendString("[MQTT] ★连接成功★\r\n");
+                SysEventFlag |= CONNECT_EVENT;
+            }
+            else
+            {
+                Usart1_SendString("[MQTT] ★连接被拒，返回码 = ");
+                {
+                    char num[4];
+                    sprintf(num, "%u", data[3]);
+                    Usart1_SendString(num);
+                }
+                Usart1_SendString("\r\n");
+
+                /* 返回码含义：
+                 *   1 = 协议版本不支持
+                 *   2 = ClientID 被拒
+                 *   4 = 用户名密码错
+                 *   5 = 未授权（最常见） */
+            }
+        }
+        break;
+
+    /*=================================================================
+     * PUBLISH：收到服务器发来的消息
+     *
+     * ★ 这里是 OTA 的入口 ★
+     *================================================================*/
+    case 0x30:
+        Usart1_SendString("[MQTT] 收到 PUBLISH\r\n");
+
+        /* 提取载荷到 Bemfa_mqtt.cmdbuff */
+        MQTT_DealPushdata_Qs0(data, len);
+
+        /* 有载荷才处理 */
+        if (strlen(Bemfa_mqtt.cmdbuff) > 0)
+        {
+            Usart1_SendString("[MQTT] 载荷: ");
+            Usart1_SendString(Bemfa_mqtt.cmdbuff);
+            Usart1_SendString("\r\n");
+
+            /*---------------------------------------------------------
+             * 尝试按 OTA 命令格式解析
+             *
+             * 格式：URL,大小,MD5
+             *   例：http://xxx.com/fw.bin,31236,abc123
+             *
+             * ★ 用返回值判断，不用 strcmp 比对固定字符串 ★
+             *   返回 0 = 解析成功（是 OTA 命令）
+             *   返回 1/2 = 格式不对（不是 OTA 命令，忽略）
+             *--------------------------------------------------------*/
+            if (CAT1_ParseOTA(Bemfa_mqtt.cmdbuff) == 0)
+            {
+                Usart1_SendString("[MQTT] ★这是 OTA 命令★\r\n");
+                SysEventFlag |= OTA_EVENT;
+            }
+            else
+            {
+                Usart1_SendString("[MQTT] 不是 OTA 命令，忽略\r\n");
+            }
+        }
+        break;
+
+    /*=================================================================
+     * SUBACK：订阅确认
+     *
+     * 报文结构：
+     *   0x90          固定头
+     *   <len>         剩余长度
+     *   <msgid_hi>    报文标识符高字节
+     *   <msgid_lo>    报文标识符低字节
+     *   <return_code> 订阅返回码
+     *
+     * 返回码：0x00/0x01/0x02 = 成功，0x80 = 失败
+     *
+     * ★ 只看最后一个字节，不要遍历整个报文 ★
+     *================================================================*/
+    case 0x90:
+        /*=================================================================
+         * SUBACK：订阅确认
+         *
+         * 报文结构：
+         *   0x90  <len>  <msgid_hi> <msgid_lo>  <code1> [<code2> ...]
+         *
+         * 实测（订阅 "123" 和 "abc" 两个 Topic）：
+         *   90 04 00 0B 00 80
+         *              └┬┘ └┬┘
+         *               │   └─ "abc" 的返回码 = 0x80（失败）
+         *               └───── "123" 的返回码 = 0x00（成功）
+         *
+         * ★ 必须逐个检查，不能只看最后一个 ★
+         *   之前的 bug：只看 data[len-1]，
+         *   结果 "123" 成功、"abc" 失败 → 误判成整体失败
+         *================================================================*/
+        if (len < 5)
+        {
+            Usart1_SendString("[MQTT] SUBACK 格式错误\r\n");
         }
         else
         {
-            switch (data[3])
+            u16 k;
+            u8  ok_count  = 0;
+            u8  fail_count = 0;
+
+            /* 返回码从第 4 字节开始（跳过 0x90、len、msgid 2 字节）*/
+            for (k = 4; k < len; k++)
             {
-            case 1:
-                Usart1_SendString("协议版本不对\r\n");
-                break;
-            case 2:
-                Usart1_SendString("ClientID被拒\r\n");
-                break;
-            case 4:
-                Usart1_SendString("用户名密码错\r\n");
-                break;
-            case 5:
-                Usart1_SendString("未授权\r\n");
-                break;
-            default:
-                Usart1_SendString("未知错误\r\n");
-                break;
+                if (data[k] == 0x80)
+                {
+                    fail_count++;
+                }
+                else
+                {
+                    ok_count++;
+                }
+            }
+
+            Usart1_SendString("[MQTT] 订阅结果: 成功 ");
+            {
+                char num[4];
+                sprintf(num, "%u", ok_count);
+                Usart1_SendString(num);
+            }
+            Usart1_SendString(" 个，失败 ");
+            {
+                char num[4];
+                sprintf(num, "%u", fail_count);
+                Usart1_SendString(num);
+            }
+            Usart1_SendString(" 个\r\n");
+
+            /* ★ 只要有一个成功，就认为连接可用 ★
+             *   因为我们只需要一个 Topic 收 OTA 命令 */
+            if (ok_count > 0)
+            {
+                Usart1_SendString("[MQTT] ★订阅成功\r\n");
+                SysEventFlag |= CONNECT_EVENT;
+            }
+            else
+            {
+                Usart1_SendString("[MQTT] ★订阅全部失败（服务器拒绝）\r\n");
             }
         }
-    }
-    else if (data[0] == 0x90)
-    {
-        u8 i = 0;
-        for (i; i < len; i++)
+        break;
+
+    /*=================================================================
+     * PUBACK：发布确认（QoS1 才有）
+     *
+     * 我们全用 QoS0，服务器不会发这个
+     *================================================================*/
+    case 0x40:
+        break;
+
+    /*=================================================================
+     * PINGRESP：心跳响应
+     *
+     * ★ 必须用 &= ~，不能用 &= ★
+     *   &= PING_SENT 会清掉其他所有标志位
+     *================================================================*/
+    case 0xD0:
+        SysEventFlag &= ~PING_SENT;
+        Usart1_SendString("[MQTT] PINGRESP\r\n");
+        break;
+
+    /*=================================================================
+     * 其他：不认识的报文
+     *================================================================*/
+    default:
+        Usart1_SendString("[MQTT] 未知报文类型: 0x");
         {
-            if (data[i] != 0x00)
-            {
-                Usart1_SendString("订阅失败\r\n");
-                break;
-            }
+            char hex[4];
+            sprintf(hex, "%02X", data[0]);
+            Usart1_SendString(hex);
         }
-        if (i == len)
-        {
-            Usart1_SendString("订阅成功\r\n");
-        }
-    }
-    /// 发布确认 (QoS 1 才有)，咱订阅主题全部使用Qos0，对我们没用，不处理
-    else if (data[0] == 0x40)
-    {
-        ;
-    }
-    else if (data[0] == 0xD0)
-    {
-        SysEventFlag &= PING_SENT;
-    }
-    else if (data[0] == 0x30)
-    {
-        MQTT_DealPushdata_Qs0(data, len);
-        if (strcmp(Bemfa_mqtt.cmdbuff, "123") == 0)
-        {
-            CAT1_ParseOTA(Bemfa_mqtt.cmdbuff);
-            SysEventFlag |= OTA_EVENT;
-        }
+        Usart1_SendString("\r\n");
+        break;
     }
 }
 
@@ -670,13 +750,113 @@ void CAT1_PropertyPost(char *postdata)
 
 /*=====================================================================
  * 函数：MQTT_DealPushdata_Qs0
- * 负责：C（从 36 号工程移植）
+ * 功能：从 PUBLISH 报文里提取载荷，存到 Bemfa_mqtt.cmdbuff
+ * 参数：data - 原始报文（usart3_value.data）
+ *       len  - 报文长度（usart3_value.count）
+ * 负责：C
  *
- * 功能：从 PUBLISH 报文里提取出 JSON 载荷，存到 Bemfa_mqtt.cmdbuff
- *=====================================================================*/
+ *=====================================================================
+ * ★ PUBLISH 报文结构 ★
+ *
+ *   固定头：
+ *     字节 0:   0x30          类型 PUBLISH
+ *     字节 1~4: 剩余长度       变长编码（1~4 字节）
+ *
+ *   可变头：
+ *     主题长度（2 字节，大端）
+ *     主题内容
+ *     [报文标识符 2 字节]      QoS > 0 才有
+ *
+ *   载荷：
+ *     剩下所有字节
+ *
+ *=====================================================================
+ * ★ 变长编码怎么读 ★
+ *
+ *   每个字节：
+ *     最高位 = 1  →  后面还有字节，继续读
+ *     最高位 = 0  →  这是最后一个字节，停止
+ *
+ *   本函数不需要算具体数值，只要知道"读到哪"，
+ *   载荷长度直接用 len - pos 算。
+ *====================================================================*/
+
 void MQTT_DealPushdata_Qs0(u8 *data, u16 len)
 {
-    /* TODO【C】：从 36 号工程移植 */
-    u16 topiclen = data[2] << 8 | data[3];
-    memcpy(Bemfa_mqtt.cmdbuff, data + 4 + topiclen, len - 4 - topiclen);
+    u16 pos = 0;
+    u16 topic_len;
+    u16 payload_len;
+    u32 remaining_len = 0; /* ★新增：从报文里读出的剩余长度★ */
+    u32 multiplier = 1;
+    u8 qos;
+    u8 byte;
+    u16 packet_end; /* ★新增：报文结束位置★ */
+
+    if (data == NULL || len < 2)
+    {
+        return;
+    }
+
+    memset(Bemfa_mqtt.cmdbuff, 0, sizeof(Bemfa_mqtt.cmdbuff));
+
+    /*---------- ① 跳过固定头，同时算出剩余长度 ----------*/
+    pos = 1; /* 跳过报文类型字节 */
+
+    do
+    {
+        if (pos >= len)
+            return;
+        byte = data[pos];
+        pos++;
+
+        /* 累加剩余长度（变长编码） */
+        remaining_len += (u32)(byte & 0x7F) * multiplier;
+        multiplier *= 128;
+
+    } while (byte & 0x80);
+
+    /* ★ 报文总长度 = 固定头长度(pos) + 剩余长度 ★ */
+    packet_end = (u16)(pos + remaining_len);
+
+    /* 防止越界：如果算出来的报文结尾超过实际收到的长度，就用实际长度 */
+    if (packet_end > len)
+    {
+        packet_end = len;
+    }
+
+    /*---------- ② 读主题长度（2 字节，大端）----------*/
+    if (pos + 2 > packet_end)
+        return;
+    topic_len = ((u16)data[pos] << 8) | data[pos + 1];
+    pos += 2;
+
+    /*---------- ③ 跳过主题内容 ----------*/
+    if (pos + topic_len > packet_end)
+        return;
+    pos += topic_len;
+
+    /*---------- ④ QoS > 0 时跳过 2 字节报文标识符 ----------*/
+    qos = (data[0] >> 1) & 0x03;
+    if (qos > 0)
+    {
+        if (pos + 2 > packet_end)
+            return;
+        pos += 2;
+    }
+
+    /*---------- ⑤ 载荷长度 = 报文结尾 - 当前位置 ----------
+     * ★ 这里用 packet_end，不是 len ★
+     *   因为 len 可能包含后面的 \r\n
+     *------------------------------------------------*/
+    payload_len = packet_end - pos;
+    if (payload_len == 0)
+        return;
+
+    if (payload_len >= sizeof(Bemfa_mqtt.cmdbuff))
+    {
+        payload_len = sizeof(Bemfa_mqtt.cmdbuff) - 1;
+    }
+
+    memcpy(Bemfa_mqtt.cmdbuff, &data[pos], payload_len);
+    Bemfa_mqtt.cmdbuff[payload_len] = '\0';
 }

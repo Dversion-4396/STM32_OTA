@@ -139,3 +139,56 @@ u8 EEPROM_ReadByte(u8 eeprom_addr, u8 reg_addr)
     return 0;
     
 }
+void EEPROM_ReadInfo(void)
+{
+    u8 i;
+    u8 *p = (u8 *)&BemfaInfoCB;
+    memset(&BemfaInfoCB, 0, sizeof(BemfaInfoCB));
+    for (i = 0; i < sizeof(BemfaInfoCB); i++)
+    {
+        p[i] = EEPROM_ReadByte(EEPROM_AT24C02_ADDR, i);
+        delay_ms(5); // 等待 5ms，确保读取完成
+    }
+
+    if (BemfaInfoCB.valid_flag != VALID_BEMFA_DATA) /* 0xDD */
+    {
+        /* 参数无效：首次上电 / EEPROM 未配置 / 数据损坏 */
+        memset(&BemfaInfoCB, 0, sizeof(BemfaInfoCB));
+        BemfaInfoCB.valid_flag = 0; /* 保持无效状态 */
+
+        Usart1_SendString("[EEPROM] 参数无效，需要重新配置\r\n");
+        return;
+    }
+    else
+    {
+        Usart1_SendString("[EEPROM] 参数有效\r\n");
+    }
+}
+
+/*=====================================================================
+ * 函数：EEPROM_SaveInfo
+ * 负责：B
+ *
+ * 实现要点：
+ *   u8 *p = (u8*)&AliInfoCB;
+ *   for(i = 0; i < sizeof(AliInfoCB); i++){
+ *       if(EEPROM_WriteByte(EEPROM_AT24C02_ADDR, i, p[i]) != I2C_ACK) return 1;
+ *       delay_ms(5);        ★AT24C02 每写一字节要等 5ms★
+ *   }
+ *   return 0;
+ *====================================================================*/
+u8 EEPROM_SaveInfo(void)
+{
+    u8 i;
+    u8 *p = (u8 *)&BemfaInfoCB;
+    for (i = 0; i < sizeof(BemfaInfoCB); i++)
+    {
+        if (EEPROM_WriteByte(EEPROM_AT24C02_ADDR, i, p[i]) != I2C_ACK)
+        {
+            return 1;
+        }
+        delay_ms(5);
+    }
+    Usart1_SendString("EEPROM SAVE INFO DONE !!!\r\n");
+    return 0;
+}
