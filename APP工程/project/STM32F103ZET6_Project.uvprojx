@@ -623,6 +623,26 @@
               <FileType>1</FileType>
               <FilePath>..\user\api\usart.c</FilePath>
             </File>
+            <File>
+              <FileName>led.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\user\api\led.c</FilePath>
+            </File>
+            <File>
+              <FileName>lcd.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\user\api\lcd.c</FilePath>
+            </File>
+            <File>
+              <FileName>lcd_init.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\user\api\lcd_init.c</FilePath>
+            </File>
+            <File>
+              <FileName>lcd_ui.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\user\api\lcd_ui.c</FilePath>
+            </File>
           </Files>
         </Group>
       </Groups>

@@ -29,10 +29,13 @@
 ; Amount of memory (in bytes) allocated for Stack
 ; Tailor this value to your application needs
 ; <h> Stack Configuration
+;   ★ 2026-11-02 从 1KB 改成 2KB：CAT1_HttpInit() 里有 char cmd[600]
+;     单独就占掉 1KB 栈的 60%，叠上 LCD/日志调用链极易爆栈。
+;     RAM 64KB 现在只用 11KB，2KB 栈毫无压力。
 ;   <o> Stack Size (in Bytes) <0x0-0xFFFFFFFF:8>
 ; </h>
 
-Stack_Size      EQU     0x00000400
+Stack_Size      EQU     0x00000800
 
                 AREA    STACK, NOINIT, READWRITE, ALIGN=3
 Stack_Mem       SPACE   Stack_Size

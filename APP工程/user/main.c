@@ -1,4 +1,4 @@
-/*=====================================================================
+﻿/*=====================================================================
  * 文件：main.c
  * 说明：APP 主程序（OTA 客户端）
  * 负责：D（主循环整合）
@@ -57,6 +57,10 @@
 #include "spi.h"
 #include "cat1.h"
 #include "mqtt.h"
+#include "led.h"
+#include "lcd_init.h"
+#include "lcd.h"
+#include "lcd_ui.h"
 /*=====================================================================
  * 全局变量定义（★只能在这里定义一次，其他文件用 extern 引用★）
  *
@@ -160,6 +164,9 @@ void U3_EventDispatch(u8 *data, u16 len)
         (pkt[0] & 0xF0) == 0x90||
         (pkt[0] & 0xF0) == 0xD0)
     {
+        /* 屏幕上的 rx 计数：能持续增长说明 MQTT 收包链路是通的，
+           一直不动就说明前缀没剥对或者根本没收到 —— 联调时一眼能看出来 */
+        g_ui_status.rx_pkts++;
         U2PassiveEvent(pkt, pkt_len);
     }
 
@@ -174,12 +181,29 @@ void ActiveEvent(void)
     {
         SysEventFlag &= ~OTA_EVENT;
 
-        if (CAT1_OTA(URL_ABuff, BemfaInfoCB.OTA_firelen) == 0)
+        /* OTA 下载期间：红灯常亮 + 屏幕显示 OTA，别让人以为卡死了。
+           下载最坏要几分钟，这期间主循环是阻塞的，
+           LCD_UI_Update() 不会被调用 —— 所以先手动刷一次，
+           把 "OTA busy" 这个状态留在屏幕上。 */
+        g_ui_status.ota_busy = 1;
+        Led_OtaBusy(1);
+        LCD_Log("OTA downloading");
+        LCD_UI_Update();
+
+        if (CAT1_OTA((char *)URL_ABuff, BemfaInfoCB.OTA_firelen) == 0)
         {
             // 将事件处理标志位清零，后续跳转到 APP 区域
             BemfaInfoCB.OTA_flag = BOOT_STA_O;
             EEPROM_SaveInfo();
+            LCD_Log("OTA OK, rebooting");
         }
+        else
+        {
+            LCD_Log("OTA FAIL");
+        }
+        g_ui_status.ota_busy = 0;
+        Led_OtaBusy(0);
+        LCD_UI_Update();
 
         // 如果失败则复位到 Bootloder 区域 等待下一次 OTA 事件
         NVIC_SystemReset();
@@ -189,6 +213,7 @@ void ActiveEvent(void)
     if (SysEventFlag & CONNECT_START)
     {
         SysEventFlag &= ~CONNECT_START;
+        LCD_Log("reconnect MQTT");
         MQTT_ConnectBemfa();
     }
 }
@@ -214,20 +239,47 @@ int main(void)
     Usart3_Init(USART3_BRR);
     Usart1_SendString("USART3 初始化完成\r\n");
 
-    /*---------- 3. 等 4G 模块启动 ----------*/
+    /*---------- 3. 初始化 LED ----------*/
+    /* ★ 放在最前面：后面任何一个初始化卡住，绿灯至少还在闪，
+       能一眼看出"程序在跑，只是某一步没过"，而不是死机。
+       绿灯 1Hz 慢闪 = 正常运行中 */
+    Led_Init();
+
+    /*---------- 4. 初始化 LCD ----------*/
+    /*
+        ★ 放在 4G 等待之前：LCD 初始化只要 ~440ms，
+          而等 4G 模块要 10 秒 —— 这 10 秒正好用来把界面画好，
+          用户上电就能看到屏幕亮起来，不用干等。
+
+        ★ 如果没接屏，LCD_Init() 会一直卡在等 SPI 标志吗？
+          不会。SPI 是主机模式，没有从机应答也能发出去，
+          只是数据没人收。所以不接屏时程序照常往下走，
+          最多多花 440ms。
+    */
+    LCD_Init();
+    LCD_UI_Init();
+
+    /*---------- 5. 等 4G 模块启动 ----------*/
     /* 模块上电后要 10~15 秒才能响应 AT，太早发没反应 */
     Usart1_SendString("等待 4G 模块启动...\r\n");
+    LCD_Log("wait 4G 10s");
     delay_ms(10000);
 
-    /*---------- 4. 激活 GPRS ----------*/
+    /*---------- 6. 激活 GPRS ----------*/
     /* 内部已有详细打印，失败会打印步骤号 */
     if (CAT1_ActiveGPRS() != 0)
     {
         Usart1_SendString("GPRS 激活失败，检查 SIM 卡和信号\r\n");
+        LCD_Log("GPRS FAIL");
+    }
+    else
+    {
+        g_ui_status.gprs_ok = 1;
+        LCD_Log("GPRS OK");
     }
 
 
-    /*---------- 5. 各模块初始化 ----------*/
+    /*---------- 7. 各模块初始化 ----------*/
     /* TODO【D】：EEPROM 和 SPI Flash 初始化 */
 
     // 初始化 I2C 和 SPI
@@ -237,10 +289,22 @@ int main(void)
     if (EEPROM_ReadInfo() != 0)
     {
         Usart1_SendString("EEPROM 读取失败\r\n");
+        LCD_Log("EEPROM FAIL");
+    }
+    else
+    {
+        g_ui_status.eeprom_ok = 1;
+        LCD_Log("EEPROM OK");
     }
     if (W25Q128_Init() != 0)
     {
         Usart1_SendString("W25Q128 初始化失败\r\n");
+        LCD_Log("FLASH FAIL");
+    }
+    else
+    {
+        g_ui_status.flash_ok = 1;
+        LCD_Log("FLASH OK");
     }
 
     /*=================================================================
@@ -257,18 +321,23 @@ int main(void)
 #if 1
     /* 连接 MQTT 服务器 */
     MQTT_Init();
+    LCD_Log("MQTT connect");
     if (MQTT_ConnectBemfa() == 0)
     {
         Usart1_SendString("连接成功\r\n");
+        g_ui_status.mqtt_ok = 1;
+        LCD_Log("MQTT OK");
     }
     else
     {
         Usart1_SendString("连接失败\r\n");
+        LCD_Log("MQTT FAIL");
     }
 #endif
 
-    /*---------- 6. 主循环 ----------*/
+    /*---------- 8. 主循环 ----------*/
     Usart1_SendString("进入 APP \r\n");
+    LCD_Log("APP running");
 
     while (1)
     {
@@ -307,6 +376,8 @@ int main(void)
         /* 处理主动事件（OTA 下载 / MQTT 连接等） */
         ActiveEvent();
 
+
+
         /* TODO【C】：MQTT 心跳保活 */
         if (SysEventFlag & CONNECT_EVENT)
         {
@@ -315,6 +386,7 @@ int main(void)
             {
                 VersionSent = 1;
                 CAT1_PropertyVersion();
+                LCD_Log("ver reported");
             }
 
             ConnectTimer++;
@@ -324,6 +396,20 @@ int main(void)
                 MQTT_PingREQ();
             }
         }
+
+        /*=================================================================
+         * 界面与指示灯（放在最后，优先级最低）
+         *
+         * ★ 为什么放最后：
+         *   这两件事都"不影响功能，只影响观感"。
+         *   放前面的话，一旦屏幕或灯出问题，会挡住串口收包和心跳。
+         *
+         * ★ LCD_UI_Update 内部自带 500ms 节流：
+         *   主循环每轮 delay_ms(10)，50 轮才真正刷一次屏。
+         *   其余 49 轮它立刻返回，开销只有一次自增和比较。
+         *================================================================*/
+        Led_Heartbeat();
+        LCD_UI_Update();
 
         delay_ms(10);
     }

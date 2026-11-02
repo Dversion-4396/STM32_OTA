@@ -18,6 +18,7 @@
 #include "eeprom.h"
 #include "spi.h"
 
+// bootloader 事件标志位
 u32 BootEventFlag = 0;
 
 /*=====================================================================
@@ -40,19 +41,23 @@ u32 BootEventFlag = 0;
 void BootLoader_Branch(void)
 {
     u16 i;
-    Usart1_SendString("2秒内输入 'w' 进入 BootLoader\r\n");
-    for (i = 0; i < 20; i++)
+    Usart1_SendString("是否进入 进入 BootLoader 'Y' \r\n");
+    for (i = 0; i < 50; i++)
     {
 
-        if (usart1_value.flag && usart1_value.data[0] == 'w')
+        if (usart1_value.flag && usart1_value.data[0] == 'Y')
         {
             usart1_value.flag = 0;
             usart1_value.count = 0;
-            Usart1_SendString("BootLoader 已进入\r\n");
+            Usart1_SendString("已进入 bootloder \r\n");
+            usart1_value.data[0] = 0;
             return;
         }
         delay_ms(100);
+
     }
+
+    //如果 OTA_flag == BOOT_STA_O，说明有待升级固件，进入 OTA 模式
     if (BemfaInfoCB.OTA_flag == BOOT_STA_O)
     {
         Usart1_SendString("BootLoader 已进入 OTA 模式\r\n");
@@ -61,6 +66,8 @@ void BootLoader_Branch(void)
     }
     Usart1_SendString("BootLoader 已退出跳转到APP\r\n");
     delay_ms(100);
+
+    //如果没有进入 BootLoader，也没有待升级固件，直接跳转到 APP
     Load_APP(FLASH_A_ADDR);
 }
 
@@ -153,7 +160,7 @@ void BootLoader_Event(u8 *data, u16 len)
 
         /* 能执行到这里说明 Load_APP 内部检查失败后 return 了
          * （APP 区为空 / 栈顶非法 / 复位向量非法） */
-        Usart1_SendString("[跳转] ★跳转失败（APP 区可能为空）\r\n");
+        Usart1_SendString("[跳转] ★跳转失败(APP 区可能为空)\r\n");
         BootLoader_Info();
         break;
 
