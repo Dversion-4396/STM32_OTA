@@ -1,4 +1,4 @@
-﻿/*=====================================================================
+/*=====================================================================
  * 文件：cat1.c
  * 说明：L511-2 4G 模块驱动实现
  * 负责：A（CAT1_ParseOTA 由 C 负责）
@@ -330,39 +330,119 @@ u8 CAT1_ActiveGPRS(void)
  *       if (CAT1_SendAT(cmd, "OK", 8000))
  *           return 3;
  *
- *       /* 4. 发送 GET 请求 *\/
+ *       -- 4. 发送 GET 请求 --
  *       if (CAT1_SendAT("AT$HTTPACTION=0", "OK", 5000))
  *           return 4;
  *
  *       return 0;
  *   }
  *====================================================================*/
+/*=====================================================================
+ * 函数：CAT1_HttpClose
+ * 功能：关闭 HTTP 服务（安全版，不管成败都往下走）
+ * 负责：A
+ *
+ * ★ 为什么必须关 ★
+ *   AT$HTTPOPEN 是"全局"状态，不关的话：
+ *     下次 AT$HTTPOPEN 会返回 ERROR 301（服务已开启）
+ *     TCP 会话也被占着，AT+CIPOPEN 会 FAIL
+ *   每次 OTA 结束后（无论成败）都必须关。
+ *====================================================================*/
+void CAT1_HttpClose(void)
+{
+    Usart1_SendString("[HTTP] 关闭服务\r\n");
+    CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
+    delay_ms(500);
+}
+
 u8 CAT1_HttpInit(char *url)
 {
     char cmd[URL_LEN];
+
+    /*---------- ① 配置 APN ----------*/
     if (CAT1_SendAT("AT+QICSGP=1,1,\"CMNET\",\"\",\"\",1", "OK", 10000))
     {
-        Usart1_SendString("APN配置失败\r\n");
+        Usart1_SendString("[HTTP] APN配置失败\r\n");
         return 1;
     }
+
+    /*---------- ② 开启 HTTP 服务 ----------
+     * ★ 如果返回失败，可能是上次没关（ERROR 301 服务已开启）
+     *   先关一次，再重开
+     *------------------------------------------------*/
     if (CAT1_SendAT("AT$HTTPOPEN", "OK", 10000))
     {
-        Usart1_SendString("[HTTP] 服务开启失败\r\n");
-        return 2;
+        Usart1_SendString("[HTTP] 首次开启失败，先关闭再重试\r\n");
+        CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
+        delay_ms(1000);
+
+        if (CAT1_SendAT("AT$HTTPOPEN", "OK", 10000))
+        {
+            Usart1_SendString("[HTTP] ★服务开启失败\r\n");
+            return 2;
+        }
     }
+
+    /*---------- ③ 配置 URL ----------*/
     sprintf(cmd, "AT$HTTPPARA=%s,80", url);
     if (CAT1_SendAT(cmd, "OK", 8000))
     {
-        Usart1_SendString("[URL ]配置失败\r\n");
+        Usart1_SendString("[HTTP] URL 配置失败\r\n");
+        CAT1_HttpClose();
         return 3;
     }
+
+    /*---------- ④ 发送 GET 请求 ----------
+     * ★ 先清空接收缓冲，避免 AT 响应残留在里面
+     *------------------------------------------------*/
+    __disable_irq();
+    usart3_value.count = 0;
+    usart3_value.flag = 0;
+    __enable_irq();
+
     if (CAT1_SendAT("AT$HTTPACTION=0", "OK", 5000))
     {
-        Usart1_SendString("[GET] 请求发送失败\r\n");
+        Usart1_SendString("[HTTP] GET 请求发送失败\r\n");
+        CAT1_HttpClose();
         return 4;
     }
-    Usart1_SendString("[HTTP]连接成功\r\n");
+
+    Usart1_SendString("[HTTP] 连接成功\r\n");
     return 0;
+}
+
+/*=====================================================================
+ * 诊断辅助：打印缓冲区的头尾，看清模块实际推了什么
+ * 只在调试期用，正式版删掉
+ *====================================================================*/
+static void CAT1_HttpDbgDump(u8 *data, u16 len)
+{
+    u16 i;
+    u16 show;
+    char hex[8];
+
+    Usart1_SendString("[DBG] count=");
+    sprintf(hex, "%u", len);
+    Usart1_SendString(hex);
+
+    Usart1_SendString("  头24字节: ");
+    show = (len < 24) ? len : 24;
+    for (i = 0; i < show; i++)
+    {
+        sprintf(hex, "%02X ", data[i]);
+        Usart1_SendString(hex);
+    }
+
+    Usart1_SendString("\r\n[DBG] 尾24字节: ");
+    if (len > 24)
+    {
+        for (i = len - 24; i < len; i++)
+        {
+            sprintf(hex, "%02X ", data[i]);
+            Usart1_SendString(hex);
+        }
+    }
+    Usart1_SendString("\r\n");
 }
 
 u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
@@ -370,6 +450,7 @@ u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
     char *p;
     u16 dlen;
     u16 avail;
+    char num[16];
     /// 防止传入空指针
     if (outbuf == NULL || outlen == NULL)
     {
@@ -378,9 +459,13 @@ u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
     }
     /// 清楚输出长度 防止外侧收到脏数据
     *outlen = 0;
+
+    /*---------- 诊断：每次进来先看缓冲区状态 ----------*/
+    CAT1_HttpDbgDump(usart3_value.data, usart3_value.count);
+
     if (usart3_value.count >= USART3_BUFFER_SIZE)
     {
-        Usart1_SendString("接受超过最大长度\r\n");
+        Usart1_SendString("[DBG] 缓冲满(溢出)\r\n");
         return 1;
     }
     /// 给数据末尾加 \0
@@ -389,12 +474,22 @@ u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
     p = strstr((char *)usart3_value.data, "$HTTPRECV:DATA,");
     if (NULL == p)
     {
-        Usart1_SendString("未找到标识符\r\n");
+        Usart1_SendString("[DBG] 没找到 $HTTPRECV:DATA,\r\n");
         return 1;
     }
     // 将p 指向支付串的末尾
     p += strlen("$HTTPRECV:DATA,");
     dlen = (u16)atoi(p);
+
+    /*---------- 诊断：模块声明的长度 ----------*/
+    Usart1_SendString("[DBG] 模块声明 dlen=");
+    sprintf(num, "%u", dlen);
+    Usart1_SendString(num);
+    Usart1_SendString("  maxlen=");
+    sprintf(num, "%u", maxlen);
+    Usart1_SendString(num);
+    Usart1_SendString("\r\n");
+
     if (dlen == 0)
     {
         *outlen = 0;
@@ -413,7 +508,7 @@ u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
 
     if (dlen > maxlen)
     {
-        Usart1_SendString("数据超出缓冲区\r\n");
+        Usart1_SendString("[DBG] dlen 大于 outbuf 容量\r\n");
         return 2;
     }
     u16 offset; /* p 距离缓冲区开头多少字节 */
@@ -424,38 +519,412 @@ u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
     /* 第二步：算 p 后面还剩多少 */
     avail = usart3_value.count - offset;
 
+    /*---------- 诊断：偏移和可用量 ----------*/
+    Usart1_SendString("[DBG] offset=");
+    sprintf(num, "%u", offset);
+    Usart1_SendString(num);
+    Usart1_SendString("  avail=");
+    sprintf(num, "%u", avail);
+    Usart1_SendString(num);
+    Usart1_SendString("\r\n");
+
     /* 第三步：检查 */
     if (avail < dlen)
     {
         dlen = avail;
+        Usart1_SendString("[DBG] ★数据不完整，被截断★\r\n");
     }
     memcpy(outbuf, p, dlen);
     *outlen = dlen;
+
+    Usart1_SendString("[DBG] 实际返回 ");
+    sprintf(num, "%u", dlen);
+    Usart1_SendString(num);
+    Usart1_SendString(" 字节\r\n");
+
     return 0;
 }
 
+/*=====================================================================
+ * 函数：OTA_ParseChunk
+ * 功能：从一段 "$HTTPRECV:DATA,<len>\r\n<data>" 数据里，把 HTTP 正文抠出来
+ *       并写到 W25Q128
+ * 负责：A
+ *
+ *=====================================================================
+ * ★ 为什么单独写这个函数（2026-11-02 排查记录）★
+ *
+ *   原来解析器的 bug：
+ *     它假设 "$HTTPRECV:DATA,<len>\r\n<data>" 完整地出现在缓冲区里，
+ *     然后在 data 里独立找 "\r\n\r\n" 判断 HTTP 头结束。
+ *
+ *   但实测发现 "\r\n\r\n" 会被段边界切开：
+ *     段A 结尾: "...\r\n"
+ *     段B 开头: "\r\n<正文>"
+ *     → 每段独立找永远找不到 → 整段被当头部丢掉 → 只解析出 824 字节
+ *
+ *   修复思路：
+ *     把"是否找到头结束"做成跨段状态（got_hdr 由调用者保存），
+ *     并且用一个"连续匹配计数"跟踪 "\r\n\r\n"，
+ *     这样即使被切开也能正确识别。
+ *=====================================================================
+ * 参数：
+ *   buf     - 数据区起始（$HTTPRECV:DATA, 后面那串数字之后、\r\n 之后）
+ *   len     - 数据区长度
+ *   got_hdr - 输入输出：是否已经跳过 HTTP 响应头
+ *   addr    - 输入输出：W25Q128 写地址
+ *   total   - 输入输出：累计写入字节数
+ *   hdr_cnt - 输入输出：匹配 "\r\n\r\n" 的进度（0~4）
+ * 返回：无
+ *====================================================================*/
+static void OTA_ParseChunk(u8 *buf, u32 len,
+                           u8  *got_hdr,
+                           u32 *addr,
+                           u32 *total,
+                           u8  *hdr_cnt)
+{
+    u32 i;
+    u32 start = 0;
+    u32 body_len;
+
+    if (len == 0) return;
+
+    /*---------- 如果还没跳过 HTTP 头，先找 "\r\n\r\n" ----------*/
+    if (*got_hdr == 0)
+    {
+        for (i = 0; i < len; i++)
+        {
+            /* 用状态机匹配 "\r\n\r\n"，跨段也能正确工作 */
+            if (buf[i] == '\r')
+            {
+                if (*hdr_cnt == 0 || *hdr_cnt == 2) (*hdr_cnt)++;
+                else                                 *hdr_cnt = 1;
+            }
+            else if (buf[i] == '\n')
+            {
+                if (*hdr_cnt == 1 || *hdr_cnt == 3) (*hdr_cnt)++;
+                else                                 *hdr_cnt = 0;
+            }
+            else
+            {
+                *hdr_cnt = 0;
+            }
+
+            /* 匹配到 4 个 = 找到 "\r\n\r\n" */
+            if (*hdr_cnt >= 4)
+            {
+                *got_hdr = 1;
+                *hdr_cnt = 0;
+                start = i + 1;      /* 正文从下一个字节开始 */
+                break;
+            }
+        }
+
+        /* 整段都是头，没找到正文起点 */
+        if (*got_hdr == 0) return;
+    }
+
+    /*---------- 剩下的都是正文，写 Flash ----------*/
+    body_len = len - start;
+    if (body_len == 0) return;
+
+    if (W25Q128_Write(*addr, buf + start, (u16)body_len) != 0)
+    {
+        Usart1_SendString("\r\n[OTA] ★Flash 写入失败\r\n");
+        return;
+    }
+
+    *addr  += body_len;
+    *total += body_len;
+}
+
+/*=====================================================================
+ * 函数：CAT1_OTAFetchRange
+ * 功能：下载固件的一个区间（用 HTTP Range 头）
+ * 负责：A
+ *
+ *=====================================================================
+ * ★ 为什么要分段下载（2026-11-02 排查记录）★
+ *
+ *   实测发现：一次 AT$HTTPACTION=0 请求，模块只能推 7~13KB 就停了，
+ *   而固件有 15KB。两次实测：
+ *     第1次：目标 14880，只收到 7689 字节数据
+ *     第2次：目标 14936，只收到 12888 字节数据
+ *   差异是随机的，说明是模块内部缓冲/TCP 窗口限制，不是我们代码问题。
+ *
+ *   解决办法：用 HTTP Range 请求头分段下载。
+ *     Range: bytes=0-8191      → 要前 8KB
+ *     Range: bytes=8192-16383  → 要后 8KB
+ *   每段都远小于模块的单次推送上限，所以能收全。
+ *
+ *=====================================================================
+ * 参数：
+ *   url      - 固件 URL
+ *   range_lo - 起始字节（含）
+ *   range_hi - 结束字节（含）
+ *   got_hdr  - 输入输出：是否已跳过 HTTP 头（多段共用）
+ *   addr     - 输入输出：W25Q128 写地址
+ *   total    - 输入输出：累计写入字节数
+ *   hdr_cnt  - 输入输出：头匹配进度（多段共用）
+ * 返回：0=成功  1=HTTP 初始化失败  2=接收超时  3=无数据
+ *====================================================================*/
+static u8 CAT1_OTAFetchRange(char *url, u32 range_lo, u32 range_hi,
+                             u8 *got_hdr, u32 *addr, u32 *total, u8 *hdr_cnt)
+{
+    char cmd[URL_LEN + 64];
+    u32  wait = 0;
+    u32  last_count = 0;
+    u32  idle_cnt = 0;
+    u32  body_before = *total;   /* 本段开始前的正文累计 */
+    u32  body_got;               /* 本段收到的正文字节数 */
+    u32  body_need;              /* 本段应该收到多少正文 */
+    u8   ret;
+
+    /*=================================================================
+     * ★ 关键：每次 Range 请求都要重置 HTTP 头跳过状态 ★
+     *
+     *   每个 Range 请求都是一个独立的 HTTP 事务，各有自己的响应头：
+     *     HTTP/1.1 206 Partial Content\r\n
+     *     Content-Range: bytes 8192-14667/14668\r\n
+     *     ...
+     *     \r\n
+     *     <正文>
+     *
+     *   如果不重置，第 2 段就以为头已经跳过了，
+     *   把第 2 段的 430 字节响应头当成固件写进 Flash。
+     *
+     *   实测现象（2026-11-02）：
+     *     目标 14668，累计收到 15098
+     *     15098 - 14668 = 430  ← 正好是 nginx 响应头大小
+     *=================================================================*/
+    *got_hdr = 0;
+    *hdr_cnt = 0;
+
+    body_need = range_hi - range_lo + 1;
+
+    /*---------- ① 打开 HTTP 服务 ----------*/
+    if (CAT1_SendAT("AT$HTTPOPEN", "OK", 10000))
+    {
+        /* 可能是上次没关，先关再重开 */
+        CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
+        delay_ms(1000);
+        if (CAT1_SendAT("AT$HTTPOPEN", "OK", 10000))
+        {
+            Usart1_SendString("[HTTP] 服务开启失败\r\n");
+            return 1;
+        }
+    }
+
+    /*---------- ② 配置 URL ----------*/
+    sprintf(cmd, "AT$HTTPPARA=%s,80", url);
+    if (CAT1_SendAT(cmd, "OK", 8000))
+    {
+        Usart1_SendString("[HTTP] URL 配置失败\r\n");
+        CAT1_HttpClose();
+        return 1;
+    }
+
+    /*---------- ③ 设置 Range 请求头 ----------
+     * ★ 关键：告诉服务器只发这一段
+     *   格式：Range: bytes=<起始>-<结束>
+     *------------------------------------------------*/
+    sprintf(cmd, "AT$HTTPRQH=Range,bytes=%lu-%lu",
+            (unsigned long)range_lo, (unsigned long)range_hi);
+    if (CAT1_SendAT(cmd, "OK", 8000))
+    {
+        Usart1_SendString("[HTTP] ★Range 头设置失败（服务器可能不支持分段）\r\n");
+        CAT1_HttpClose();
+        return 1;
+    }
+
+    /*---------- ④ 清空缓冲后发 GET ----------
+     * ★ 关键修正（2026-11-02）★
+     *
+     *   手册 5.6.4 明确写了 AT$HTTPACTION=0 的响应：
+     *     $HTTPRECV:DATA,<len>
+     *     ......
+     *
+     *   它【不会】先回 "OK"！数据直接就来。
+     *
+     *   之前用 CAT1_SendAT("AT$HTTPACTION=0", "OK", 5000) 等 "OK"，
+     *   必然等不到 → 5 秒后超时返回 1 → 报"GET 请求失败"。
+     *
+     *   所以这里改成"只发不等"，发完直接进入接收循环。
+     *------------------------------------------------*/
+    __disable_irq();
+    usart3_value.count = 0;
+    usart3_value.flag  = 0;
+    __enable_irq();
+
+    Usart3_SendString("AT$HTTPACTION=0\r\n");
+
+    /* 给模块 500ms 启动请求（不判断响应）*/
+    delay_ms(500);
+
+    /*---------- ⑤ 接收这一段的数据 ----------
+     * ★ 关键：收够本段需要的正文字节就停 ★
+     *
+     *   每段是独立的 HTTP 事务，服务器只会返回本段的数据。
+     *   一旦正文收够 body_need 字节，就立即停止，不多等。
+     *   这样即使模块继续推（比如连接没断），也不会多收。
+     *------------------------------------------------*/
+    {
+        /* 缓冲上限：正文 + 头部余量 */
+        u32 buf_limit = body_need + 1024;
+
+        while (1)
+        {
+            delay_ms(10);
+            wait++;
+
+            if (usart3_value.count != last_count)
+            {
+                if (usart3_value.count - last_count >= 1024)
+                {
+                    Usart1_SendString(".");
+                }
+                last_count = usart3_value.count;
+                idle_cnt = 0;
+            }
+            else
+            {
+                idle_cnt++;
+            }
+
+            /* 缓冲区快满了，必须停（防止溢出） */
+            if (usart3_value.count >= (USART3_BUFFER_SIZE - 64))
+                break;
+
+            /* 收够了本段需要的量 + 头部余量 */
+            if (usart3_value.count >= buf_limit)
+                break;
+
+            /* 空闲 3 秒 = 这段推完了 */
+            if (idle_cnt > 300)
+                break;
+
+            /* 单段总超时 60 秒 */
+            if (wait > 6000)
+                break;
+        }
+    }
+
+    /*---------- ⑥ 解析这段，把正文写进 Flash ----------*/
+    {
+        u8 *p   = usart3_value.data;
+        u8 *end = usart3_value.data + usart3_value.count;
+        u8 *tag = (u8 *)"$HTTPRECV:DATA,";
+        u16 taglen = 15;
+
+        while (p + taglen <= end)
+        {
+            u16 k;
+            u8 *q = NULL;
+
+            /* 找 "$HTTPRECV:DATA," */
+            for (; p + taglen <= end; p++)
+            {
+                for (k = 0; k < taglen; k++)
+                    if (p[k] != tag[k]) break;
+                if (k == taglen)
+                {
+                    q = p + taglen;
+                    break;
+                }
+            }
+            if (q == NULL) break;
+
+            /* 读长度 */
+            {
+                u32 seglen = 0;
+
+                while (q < end && *q >= '0' && *q <= '9')
+                    seglen = seglen * 10 + (*q++ - '0');
+
+                /* 跳过 \r\n */
+                while (q < end && (*q == '\r' || *q == '\n')) q++;
+
+                /* ★ 关键修复：用 seglen 限制数据范围，防止越界 ★ */
+                if (q + seglen > end)
+                {
+                    seglen = (u32)(end - q);
+                }
+
+                /* 空段（模块有时推 len=0）直接跳过 */
+                if (seglen == 0)
+                {
+                    p = q;
+                    continue;
+                }
+
+                /* 把这段交给解析器（它内部处理 HTTP 头跳过） */
+                OTA_ParseChunk(q, seglen, got_hdr, addr, total, hdr_cnt);
+
+                p = q + seglen;
+            }
+        }
+    }
+
+    /*---------- ⑦ 关闭 HTTP（准备下一段）----------*/
+    CAT1_HttpClose();
+
+    ret = 0;
+    return ret;
+}
+
+/*=====================================================================
+ * 函数：CAT1_OTA
+ * 功能：OTA 固件下载主流程（分段下载版）
+ * 负责：A
+ *
+ *=====================================================================
+ * ★ 整体流程 ★
+ *
+ *   1. 激活 GPRS
+ *   2. 按 8KB 一段，循环下载：
+ *        Range: bytes=<lo>-<hi>
+ *        → 收到数据 → 解析 → 写 W25Q128
+ *   3. 全部下完 → 校验总长度
+ *   4. 关闭 HTTP
+ *
+ * ★ 为什么用 8KB 一段 ★
+ *   实测模块单次最多能推 12~13KB，
+ *   8KB 留足余量，保证每段都能收全。
+ *
+ * ★ 缓冲区只需要装 8KB + 头部开销（约 9KB）★
+ *   当前 USART3_BUFFER_SIZE = 16384，够用。
+ *====================================================================*/
 u8 CAT1_OTA(char *url, u32 fw_len)
 {
-    u8 buf[256];
-    u16 dlen;      /// 本次提取了多少字节
-    u32 total = 0; /// 累计已下载字节数
-    u32 addr = 0;  /// W25Q128地址
-    u16 seg;
-    u8 got_header = 0; /// 标记“是否已经跳过 HTTP 响应头”。
-    u16 block;
+    u32 addr     = 0;      /* W25Q128 写地址 */
+    u32 total    = 0;      /* 累计写入字节数 */
+    u32 lo;                /* 当前段起始 */
+    u32 hi;                /* 当前段结束 */
+    u16 block;             /* 要擦几个 64KB 块 */
     u16 i;
+    u8  got_hdr  = 0;      /* 是否已跳过 HTTP 响应头 */
+    u8  hdr_cnt  = 0;      /* "\r\n\r\n" 匹配进度 */
+    u8  ret;
+    u32 seg_idx  = 0;      /* 第几段（打印用） */
+    u32 before   = 0;      /* 本段开始前的累计值 */
 
-    /* ① 算要擦几块（★用 65536，u16）★ */
+    /*---------- ① 长度检查 ----------*/
     block = (u16)((fw_len + 65535) / 65536);
-    if (block == 0)
-        block = 1;
-        
+    if (block == 0) block = 1;
+
     if (block > 256)
     {
         Usart1_SendString("[OTA] ★固件太大，超过 16MB\r\n");
         return 1;
     }
-    /* ② 激活网络 */
+
+    if (fw_len < 28)
+    {
+        Usart1_SendString("[OTA] ★固件长度异常（小于 28 字节尾缀）\r\n");
+        return 1;
+    }
+
+    /*---------- ② 激活网络 ----------*/
     Usart1_SendString("[OTA] 网络激活...\r\n");
     if (CAT1_ActiveGPRS())
     {
@@ -463,15 +932,7 @@ u8 CAT1_OTA(char *url, u32 fw_len)
         return 1;
     }
 
-    /* ③ HTTP 初始化 */
-    Usart1_SendString("[OTA] 开始下载...\r\n");
-    if (CAT1_HttpInit(url))
-    {
-        Usart1_SendString("[OTA] HTTP 初始化失败\r\n");
-        return 2;
-    }
-
-    /* ④ 擦 Flash */
+    /*---------- ③ 擦除 Flash ----------*/
     Usart1_SendString("[OTA] 擦除 Flash");
     for (i = 0; i < block; i++)
     {
@@ -480,93 +941,109 @@ u8 CAT1_OTA(char *url, u32 fw_len)
     }
     Usart1_SendString("\r\n");
 
-    /* ⑤ 接收循环 */
-    Usart1_SendString("[OTA] 接收数据...\r\n");
-    for (seg = 0; seg < 60000; seg++)
+    /*---------- ④ 分段下载 ----------
+     * 每段 8KB（8192 字节）
+     *------------------------------------------------*/
+    #define OTA_CHUNK_SIZE  8192
+
+    Usart1_SendString("[OTA] 分段下载（每段 8KB）...\r\n");
+
+    for (lo = 0; lo < fw_len; lo = hi + 1)
     {
-        delay_ms(20);
+        hi = lo + OTA_CHUNK_SIZE - 1;
+        if (hi >= fw_len) hi = fw_len - 1;
 
-        if (usart3_value.flag == 0)
-            continue;
-        usart3_value.flag = 0;
+        seg_idx++;
 
-        if (CAT1_HttpRead(buf, sizeof(buf), &dlen) != 0)
+        Usart1_SendString("[OTA] 第 ");
         {
-            usart3_value.count = 0;
-            continue;
+            char num[8];
+            sprintf(num, "%lu", (unsigned long)seg_idx);
+            Usart1_SendString(num);
         }
-
-        if (dlen == 0)
+        Usart1_SendString(" 段: bytes=");
         {
-            usart3_value.count = 0;
-            continue;
+            char num[16];
+            sprintf(num, "%lu", (unsigned long)lo);
+            Usart1_SendString(num);
         }
-
-        /* ★跳过响应头（可能多段）★ */
-        if (got_header == 0 && strncmp((char *)buf, "HTTP/", 5) == 0)
+        Usart1_SendString("-");
         {
-            got_header = 1;
-            Usart1_SendString("[OTA] 响应头 ");
+            char num[16];
+            sprintf(num, "%lu", (unsigned long)hi);
+            Usart1_SendString(num);
+        }
+        Usart1_SendString("  ");
+
+        before = total;     /* 记录本段开始前的累计值 */
+        ret = CAT1_OTAFetchRange(url, lo, hi,
+                                 &got_hdr, &addr, &total, &hdr_cnt);
+
+        Usart1_SendString("\r\n");
+
+        if (ret != 0)
+        {
+            Usart1_SendString("[OTA] ★第 ");
             {
                 char num[8];
-                sprintf(num, "%u", dlen);
+                sprintf(num, "%lu", (unsigned long)seg_idx);
                 Usart1_SendString(num);
             }
-            Usart1_SendString(" 字节\r\n");
-
-            usart3_value.count = 0;
-            continue;
-        }
-
-        /* ★写 Flash（函数调用！）★ */
-        if (W25Q128_Write(addr, buf, dlen) != 0)
-        {
-            Usart1_SendString("\r\n[OTA] Flash 写入失败\r\n");
-            CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
+            Usart1_SendString(" 段下载失败，中止\r\n");
+            CAT1_HttpClose();
             return 3;
         }
-
-        addr += dlen;
-        total += dlen;
-
-        /* 进度点 */
-        if ((total % 4096) < dlen)
+        /* 本段没收到任何新数据 = 服务器不支持 Range 或网络异常
+         * ★ 必须用 before 比较，不能用 total==0 ★
+         *   因为 total 是累计值，第2段之后永远大于0 */
+        if (total == before)
         {
-            Usart1_SendString(".");
+            Usart1_SendString("[OTA] ★本段没有收到数据\r\n");
+            CAT1_HttpClose();
+            return 4;
         }
 
-        usart3_value.count = 0;
-
-        /* 收完了吗 */
-        if (total >= fw_len)
-            break;
-    }
-
-    /* ⑥ 检查是否收完 */
-    if (total < fw_len)
-    {
-        Usart1_SendString("\r\n[OTA] 超时，只收到 ");
+        Usart1_SendString("  累计 ");
         {
             char num[16];
             sprintf(num, "%lu", (unsigned long)total);
             Usart1_SendString(num);
         }
+        Usart1_SendString(" / ");
+        {
+            char num[16];
+            sprintf(num, "%lu", (unsigned long)fw_len);
+            Usart1_SendString(num);
+        }
         Usart1_SendString(" 字节\r\n");
-        CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
+
+        /* 已收够，提前结束 */
+        if (total >= fw_len) break;
+    }
+
+    /*---------- ⑤ 关闭 HTTP ----------*/
+    CAT1_HttpClose();
+
+    /*---------- ⑥ 结果判定 ----------*/
+    if (total != fw_len)
+    {
+        Usart1_SendString("[OTA] ★★ 固件不完整：");
+        {
+            char num[16];
+            sprintf(num, "%lu", (unsigned long)total);
+            Usart1_SendString(num);
+        }
+        Usart1_SendString(" / ");
+        {
+            char num[16];
+            sprintf(num, "%lu", (unsigned long)fw_len);
+            Usart1_SendString(num);
+        }
+        Usart1_SendString(" 字节\r\n");
         return 4;
     }
 
-    /* ⑦ 关闭 HTTP */
-    CAT1_SendAT("AT$HTTPCLOSE", "OK", 5000);
-
-    Usart1_SendString("\r\n[OTA] 下载完成，共 ");
-    {
-        char num[16];
-        sprintf(num, "%lu", (unsigned long)total);
-        Usart1_SendString(num);
-    }
-    Usart1_SendString(" 字节\r\n");
-
+    Usart1_SendString("[OTA] ★固件完整，大小校验通过\r\n");
     return 0;
 }
 

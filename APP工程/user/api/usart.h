@@ -2,9 +2,22 @@
 #define _USART_H
 #include "common.h"
 /* modbus.h 已移除：与 OTA 无关 */
-#define USART3_BUFFER_SIZE (1024)   /* ★改为 1024：HTTP 下载一次返回约 274 字节★ */
+#define USART3_BUFFER_SIZE (16384)   /* ★改为 1024：HTTP 下载一次返回约 274 字节★ */
 #define USART1_BUFFER_SIZE (256)
 #define USART2_BUFFER_SIZE (256)
+typedef struct
+{
+  // u8 类型缓冲区数组，用于存放数据内容
+  u8 data[USART1_BUFFER_SIZE];
+  // data 数组中，有效字节个数
+  u16 count;
+  /*
+  情况一: 当前数据尚未接收完成，flag = 0
+  情况二: 当前数据接收完成，触发 IDLE 中断，flag = 1
+  情况三: data 数据接收缓冲区已满，flag = 1
+  */
+  u8 flag;
+} USART_Data;
 typedef struct
 {
   // u8 类型缓冲区数组，用于存放数据内容
@@ -17,12 +30,13 @@ typedef struct
   情况三: data 数据接收缓冲区已满，flag = 1
   */
   u8 flag;
-} USART_Data;
+} USART3_Data;
+
 extern USART_Data usart1_value;
 
 extern USART_Data usart2_value;
 
-extern USART_Data usart3_value;
+extern USART3_Data usart3_value;
 /// @brief usart1初始化函数要求用户提供对应波特率
 /** Tx=pa9 rx=pa10
  *  需要设置浮空输入模式

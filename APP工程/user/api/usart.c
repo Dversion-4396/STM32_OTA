@@ -21,7 +21,7 @@ USART_Data usart1_value = {0};
 
 USART_Data usart2_value = {0};
 
-USART_Data usart3_value = {0};
+USART3_Data usart3_value = {0};
 void Usart1_Init(u32 brr)
 {
     /// 对 gpioa 和 usart1 进行时钟使能

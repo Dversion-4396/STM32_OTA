@@ -46,9 +46,9 @@ static u8 MQTT_CheckPacket(u8 *data, u16 len, u16 *pkt_len)
     u16 pos = 1;
     u32 rem = 0;
     u32 mul = 1;
-    u8  b;
-    u8  type;
-    u8  cnt = 0;
+    u8 b;
+    u8 type;
+    u8 cnt = 0;
 
     if (len < 2)
         return 0;
@@ -64,8 +64,10 @@ static u8 MQTT_CheckPacket(u8 *data, u16 len, u16 *pkt_len)
     /*---------- ② 解析剩余长度（变长编码，最多 4 字节）----------*/
     do
     {
-        if (pos >= len)  return 0;
-        if (cnt >= 4)    return 0;      /* 超过 4 字节 = 非法 */
+        if (pos >= len)
+            return 0;
+        if (cnt >= 4)
+            return 0; /* 超过 4 字节 = 非法 */
         b = data[pos++];
         rem += (u32)(b & 0x7F) * mul;
         mul *= 128;
@@ -117,11 +119,11 @@ void U3_EventDispatch(u8 *data, u16 len)
     char *hdr;
     char *p;
     char *q;
-    u16   data_start;
-    u16   data_len;
-    u16   i;
-    u16   pkt_len;
-    u8    field;
+    u16 data_start;
+    u16 data_len;
+    u16 i;
+    u16 pkt_len;
+    u8 field;
 
     if (data == NULL || len == 0)
         return;
@@ -158,8 +160,8 @@ void U3_EventDispatch(u8 *data, u16 len)
          *   字段 3 = len（数据长度）  ← 要这个
          *------------------------------------------------*/
         data_len = 0;
-        field    = 0;
-        q        = hdr + 10;        /* 跳过 "+CIPRXGET:" */
+        field = 0;
+        q = hdr + 10; /* 跳过 "+CIPRXGET:" */
 
         while (*q != '\0' && *q != '\r' && *q != '\n')
         {
@@ -176,8 +178,10 @@ void U3_EventDispatch(u8 *data, u16 len)
         }
 
         /*---------- ③ 越界保护 ----------*/
-        if (data_start >= len) return;
-        if (data_len == 0)     return;
+        if (data_start >= len)
+            return;
+        if (data_len == 0)
+            return;
         if ((u32)data_start + (u32)data_len > (u32)len)
         {
             data_len = len - data_start;
@@ -242,6 +246,21 @@ void ActiveEvent(void)
 int main(void)
 {
     __enable_irq();
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOE, ENABLE);
+    GPIO_InitTypeDef gpio_initStruct = {0};
+    gpio_initStruct.GPIO_Pin = GPIO_Pin_5;
+    gpio_initStruct.GPIO_Mode = GPIO_Mode_Out_PP;
+    gpio_initStruct.GPIO_Speed = GPIO_Speed_2MHz;
+    GPIO_Init(GPIOB, &gpio_initStruct);
+    gpio_initStruct.GPIO_Pin = GPIO_Pin_5;
+    gpio_initStruct.GPIO_Mode = GPIO_Mode_Out_PP;
+    gpio_initStruct.GPIO_Speed = GPIO_Speed_2MHz;
+    GPIO_Init(GPIOE, &gpio_initStruct);
+    
+    GPIO_ResetBits(GPIOE,GPIO_Pin_5);
+    GPIO_ResetBits(GPIOB,GPIO_Pin_5);
+
     /*---------- 1. 初始化调试串口（必须最先）----------*/
     Usart1_Init(USART1_BRR);
     Usart1_SendString("\r\n\r\n");
@@ -258,7 +277,7 @@ int main(void)
     /* 模块上电后要 10~15 秒才能响应 AT，太早发没反应 */
     Usart1_SendString("等待 4G 模块启动...\r\n");
     delay_ms(10000);
-
+   
     /*---------- 4. 激活 GPRS ----------*/
     /* 内部已有详细打印，失败会打印步骤号 */
     if (CAT1_ActiveGPRS() != 0)
@@ -269,6 +288,62 @@ int main(void)
     Usart1_SendString("各模块初始化");
     I2C_GPIO_Init();
     EEPROM_ReadInfo();
+
+    /*=================================================================
+     * ★★ 首次上电：初始化 EEPROM 参数（2026-11-02 修复 OTA 不生效）★★
+     *
+     * 【问题现象】
+     *   APP 下载固件成功 → 置 OTA_flag = 0x5AA5C33C → 存 EEPROM → 重启
+     *   BootLoader 上电却打印 "[EEPROM] 参数无效，需要重新配置"
+     *   然后 "BootLoader 已退出跳转到APP" —— 根本没进 OTA 模式
+     *
+     * 【根因】
+     *   BootLoader 的 EEPROM_ReadInfo() 里有这段：
+     *     if (BemfaInfoCB.valid_flag != VALID_BEMFA_DATA)
+     *     {
+     *         memset(&BemfaInfoCB, 0, sizeof(BemfaInfoCB));   ← 全清零
+     *     }
+     *   而 APP 从来没设过 valid_flag，它一直是 0。
+     *   所以 APP 辛苦写进去的 OTA_flag，被 BootLoader 读的时候清零了。
+     *
+     * 【修复】
+     *   APP 首次上电时，把 valid_flag 设成 0xDD 并保存。
+     *   以后上电走 else 分支，不会再清零。
+     *
+     * 【验证】
+     *   修复后 BootLoader 应该打印 "[EEPROM] 参数有效"
+     *   而不是 "[EEPROM] 参数无效，需要重新配置"
+     *================================================================*/
+    if (BemfaInfoCB.valid_flag != VALID_BEMFA_DATA)
+    {
+        Usart1_SendString("[INIT] 首次上电，初始化 EEPROM 参数\r\n");
+
+        BemfaInfoCB.valid_flag = VALID_BEMFA_DATA;   /* 0xDD */
+
+        /* 巴法云私钥（32 位）*/
+        strcpy((char *)BemfaInfoCB.UID_Buff, USERNAME_KEY);
+
+        /* 订阅的 Topic */
+        strcpy((char *)BemfaInfoCB.Topic_Buff, TOPIC_1);
+
+        /* 版本号（最长 23 字符）*/
+        strncpy((char *)BemfaInfoCB.Version_ABuff, "v1.0.0", VERSION_LEN);
+        BemfaInfoCB.Version_ABuff[VERSION_LEN] = '\0';
+
+        /* OTA 状态清零 */
+        BemfaInfoCB.OTA_firelen = 0;
+        BemfaInfoCB.OTA_flag    = 0;
+
+        if (EEPROM_SaveInfo() == 0)
+        {
+            Usart1_SendString("[INIT] ★EEPROM 参数已初始化\r\n");
+        }
+        else
+        {
+            Usart1_SendString("[INIT] ★EEPROM 写入失败\r\n");
+        }
+    }
+
     Usart1_SendString("EEPROM 读取完成\r\n");
     SPI2_Init();
     Usart1_SendString("SPI 初始化完成\r\n");
@@ -329,7 +404,7 @@ int main(void)
                 MQTT_PingREQ();
             }
         }
-        
+
         delay_ms(10);
     }
 }
