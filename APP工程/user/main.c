@@ -258,8 +258,8 @@ int main(void)
     gpio_initStruct.GPIO_Speed = GPIO_Speed_2MHz;
     GPIO_Init(GPIOE, &gpio_initStruct);
     
-    GPIO_ResetBits(GPIOE,GPIO_Pin_5);
-    GPIO_ResetBits(GPIOB,GPIO_Pin_5);
+    GPIO_SetBits(GPIOE,GPIO_Pin_5);
+    GPIO_SetBits(GPIOB,GPIO_Pin_5);
 
     /*---------- 1. 初始化调试串口（必须最先）----------*/
     Usart1_Init(USART1_BRR);

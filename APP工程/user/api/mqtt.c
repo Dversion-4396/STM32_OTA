@@ -199,7 +199,29 @@ u8 MQTT_ConnectBemfa(void)
     /*---------- ③ 建立 TCP 连接 ----------
      * 手册：C. 建立连接会话：AT+CIPOPEN=0,"TCP","ip",port
      * 成功响应：+CIPOPEN: SUCCESS,0
-     *------------------------------------------------*/
+     *
+     *=================================================================
+     * ★ 为什么失败也要继续（2026-11-02 实测）★
+     *
+     *   实测现象：
+     *     [MQTT] 3.建立TCP连接
+     *     [MQTT] TCP连接失败
+     *     响应: [OK +CIPOPEN: FAIL,0]
+     *     ...但后面能正常收到 PUBLISH 数据！
+     *
+     *   原因：
+     *     上次 HTTP 下载结束后，TCP 会话 0 没有完全释放。
+     *     再发 AT+CIPOPEN=0 会因为"会话已存在"返回 FAIL,0。
+     *     但旧会话本身是活的，数据能收发。
+     *
+     *   所以 FAIL 有两种含义：
+     *     ① 真的连不上（网络问题）
+     *     ② 会话已存在（旧连接还活着）
+     *
+     *   处理策略：
+     *     FAIL 时不立即报错，而是先 AT+CIPCLOSE=0 关掉旧的，
+     *     再重试一次。如果还是 FAIL，才认定真失败。
+     *================================================================*/
     Usart1_SendString("[MQTT] 3.建立TCP连接\r\n");
     sprintf(cmd, "AT+CIPOPEN=0,\"TCP\",\"%s\",%d",
             Bemfa_mqtt.ServerIP, Bemfa_mqtt.ServerPort);
@@ -207,13 +229,38 @@ u8 MQTT_ConnectBemfa(void)
     ret = CAT1_SendAT(cmd, "CIPOPEN: SUCCESS", 20000);
     if (ret != 0)
     {
-        Usart1_SendString("[MQTT] TCP连接失败\r\n");
+        Usart1_SendString("[MQTT] 首次建连返回非 SUCCESS，检查是否残留会话\r\n");
         Usart1_SendString("[MQTT] 响应: [");
         Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
         Usart1_SendString("]\r\n");
-        return 3;
+
+        /* 先关掉可能残留的会话 */
+        Usart1_SendString("[MQTT] 关闭残留会话 0...\r\n");
+        CAT1_SendAT("AT+CIPCLOSE=0", "OK", 5000);
+        delay_ms(1000);
+
+        /* 重试一次 */
+        Usart1_SendString("[MQTT] 重试建立 TCP 连接...\r\n");
+        ret = CAT1_SendAT(cmd, "CIPOPEN: SUCCESS", 20000);
+        if (ret != 0)
+        {
+            /* 第二次还是失败，可能是"会话已存在"但能通，
+             * 不直接放弃，继续往下走发 CONNECT 报文试试 */
+            Usart1_SendString("[MQTT] ★重试仍失败，继续尝试发 MQTT 报文\r\n");
+            Usart1_SendString("[MQTT] 响应: [");
+            Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
+            Usart1_SendString("]\r\n");
+            /* ★ 不 return，继续往下走 ★ */
+        }
+        else
+        {
+            Usart1_SendString("[MQTT] TCP已连接（重试成功）\r\n");
+        }
     }
-    Usart1_SendString("[MQTT] TCP已连接\r\n");
+    else
+    {
+        Usart1_SendString("[MQTT] TCP已连接\r\n");
+    }
 
     /*---------- ④ 发 CONNECT 报文（用 CIPSEND 包裹）----------*/
     Usart1_SendString("[MQTT] 4.发送CONNECT报文\r\n");
