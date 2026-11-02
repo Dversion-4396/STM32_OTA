@@ -393,7 +393,7 @@ u8 CAT1_HttpRead(u8 *outbuf, u16 maxlen, u16 *outlen)
         Usart1_SendString("未找到标识符\r\n");
         return 1;
     }
-    // 将p 指向支付串的末尾
+    // 将 p 指向支付串的末尾
     p += strlen("$HTTPRECV:DATA,");
     dlen = (u16)atoi(p);
     if (dlen == 0)

@@ -12,8 +12,9 @@
 	    - 中文显示 (需要 4 套汉字字模, 体积大)
 	    - 画圆 / 画线 / 画矩形 (界面不需要)
 	  这样省下约 20KB Flash。以后需要中文再单独加字模。
-	★ 2026-11-02 加回图片显示 LCD_ShowImage16（原版注释说"需要 16KB 图片表"所以删了，
-	  但现在启动画面要用，240x112 RGB565 = 53760 字节，放 lcd_img.h）。
+	★ 2026-11-02 加回图片显示 LCD_ShowImage16（原版注释说"需要 16KB 图片表"所以删了）。
+	  同日第二次改版：屏幕改成纯状态面板，启动图片被砍掉，这个函数暂时没有调用点，
+	  留着备以后画小图标用。
 
 	坐标系统: 竖屏 240x320, (0,0) 在左上角
 	颜色格式: RGB565 (16 位)
@@ -44,6 +45,11 @@ void LCD_ShowImage16(u16 xsta, u16 ysta, u16 w, u16 h, const u16 *pal, const u8 
 /* ---- 字符与字符串 ---- */
 void LCD_ShowChar(u16 x, u16 y, u8 num, u16 fc, u16 bc, u8 sizey, u8 mode);
 void LCD_ShowString(u16 x, u16 y, const u8 *p, u16 fc, u16 bc, u8 sizey, u8 mode);
+
+/* ---- 2 倍放大字符（16x32 像素，用 8x16 字模横竖各复制 2 份）----
+   ★ 2026-11-02 加：屏幕上要突出显示版本号，16 号字太小看不清 */
+void LCD_ShowCharBig(u16 x, u16 y, u8 num, u16 fc, u16 bc);
+void LCD_ShowStringBig(u16 x, u16 y, const u8 *p, u16 fc, u16 bc);
 
 /* ---- 数字 ---- */
 u32  mypow(u8 m, u8 n);

@@ -352,6 +352,33 @@ int main(void)
         Usart1_SendString("\r\n");
     }
 
+    /*=================================================================
+     * 把 EEPROM 里的版本号同步给屏幕
+     *
+     * ★ 为什么单独拷一份，而不是让 lcd_ui.c 直接读 BemfaInfoCB：
+     *   界面层不该知道巴法云结构体长什么样。
+     *   而且 Version_ABuff 是 u8[]，UI_Status.version 是 char[]，类型对不上。
+     *
+     * ★ 为什么放在这里：
+     *   上面 if/else 两条路（首次写默认值 / 参数有效）都走完了，
+     *   此时 BemfaInfoCB 里一定已经是最终要显示的版本号。
+     *
+     * ★ 为什么要 LCD_UI_Refresh_All()：
+     *   LCD_UI_Init() 早就跑过了（那时 version 还是空的，画的是 "--"），
+     *   这里改完必须让界面下一轮重画，否则屏幕上永远停在 "--"。
+     *================================================================*/
+    {
+        u8 vi;
+        for (vi = 0; vi < (UI_VER_MAX - 1) && BemfaInfoCB.Version_ABuff[vi] != 0; vi++)
+        {
+            char vc = (char)BemfaInfoCB.Version_ABuff[vi];
+            if (vc < 0x20 || vc > 0x7E) vc = '.';
+            g_ui_status.version[vi] = vc;
+        }
+        g_ui_status.version[vi] = 0;
+        LCD_UI_Refresh_All();
+    }
+
     if (W25Q128_Init() != 0)
     {
         Usart1_SendString("W25Q128 初始化失败\r\n");
@@ -394,6 +421,10 @@ int main(void)
     /*---------- 8. 主循环 ----------*/
     Usart1_SendString("进入 APP \r\n");
     LCD_Log("APP running");
+
+    /* 进主循环前把"APP 运行中"置 1，屏幕 APP 那一行会从 BOOTING（红）变成 RUNNING（绿） */
+    g_ui_status.app_running = 1;
+    LCD_UI_Refresh_All();
 
     while (1)
     {

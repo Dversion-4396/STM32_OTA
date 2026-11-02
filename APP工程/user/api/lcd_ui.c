@@ -1,31 +1,36 @@
 ﻿/*
-	lcd_ui.c —— 手机式界面（240x320 ST7789V，65K 色）
+	lcd_ui.c —— 纯状态面板（240x320 ST7789V，65K 色）
 	==================================================================
 	布局见 lcd_ui.h 顶部注释。
 
-	★ 三个刷新节拍（都用主循环轮次计数，因为本工程 delay 是纯空转没有 ms 计时）:
-	    动图区    每 8 轮  ≈ 80ms   （主循环每轮 delay_ms(10)）
+	★ 2026-11-02 第二次改版（用户要求"把图片砍掉，只显示状态"）:
+	  去掉了启动图片区（240x92 / 16 色 4bpp / 11072 字节）和 APP 列表区，
+	  整屏改成状态面板：
+	    版本号（2 倍大字）/ 上电时间 / 4G / MQTT / EEPROM / Flash
+	    / APP 运行状态 / 事件标志 / 收包数 / 6 行日志
+	  省下 11072 字节 Flash，MDK-ARM Lite 的 32KB 上限从"只剩 772 B"变成剩约 11.8KB。
+
+	★ 两个刷新节拍（都用主循环轮次计数，因为本工程 delay 是纯空转没有 ms 计时）:
 	    运行信息   每 50 轮 ≈ 500ms
 	    日志区    脏了立刻刷，不等节拍
-	  这样最坏情况一帧只重绘 8 根柱子里高度变了的几个像素段。
+	  内容没变就一个字节都不发（全部走缓存判重）。
 
 	★ 为什么不用 SysTick:
 	  全工程没有 SysTick_Config，stm32f10x_it.c 还没参与编译
 	  （uvprojx 里 IncludeInBuild=0），所以没有可靠毫秒基准。
-	  用轮次估算的误差在 10% 以内，对动画和状态刷新完全够用。
+	  用轮次估算的误差在 10% 以内，对状态刷新完全够用。
 
-	★ 为什么 240x320 反而更快了:
+	★ 为什么 240x320 还能跑得动:
 	  虽然全屏填充从 150ms 涨到 560ms，但那是【只在开机做一次】的。
-	  平时每轮只重绘：
-	    动图 8 根柱子中高度变了的几段，最多 8 x 28 x 17 像素 ≈ 3800 像素 ≈ 28ms
-	    信息区 4 行 x 30 字符，且内容不变就不发
-	  所以稳态开销和 128x160 时基本一样。
+	  平时每轮最多重绘：
+	    运行信息区 4 行 x 30 字符，且内容不变就不发
+	    日志 6 行，只在有新日志时刷
+	  所以稳态开销很小。
 */
 
 #include "lcd_ui.h"
 #include "lcd.h"
 #include "lcd_init.h"
-#include "lcd_img.h"
 
 /*=====================================================================
  * 配色（RGB565）
@@ -34,12 +39,9 @@
 #define C_STAT_FG      0xFFFF        /* 状态栏文字：白 */
 #define C_SEP          0x4208        /* 分隔线：深灰 */
 #define C_BG           0x0000        /* 主背景：黑 */
-#define C_APPNAME      0x07E0        /* APP 名：绿 */
+#define C_VER_BG       0x001F        /* 版本号框底色：蓝 */
+#define C_VER_FG       0xFFFF        /* 版本号文字：白 */
 #define C_LABEL        0x7D7C        /* 标签文字：浅灰 */
-#define C_ITEM_FG      0xC618        /* 列表未选中：浅灰 */
-#define C_ITEM_BG      0x0000
-#define C_SEL_FG       0xFFFF        /* 列表选中：白字 */
-#define C_SEL_BG       0x001F        /* 列表选中：蓝底 */
 #define C_SIG_OFF      0x2945        /* 信号格熄灭：暗灰 */
 #define C_SIG_GPRS     0x07E0        /* 信号格 4G：绿 */
 #define C_SIG_MQTT     0x07E0        /* 信号格 MQTT：绿 */
@@ -49,48 +51,22 @@
 #define C_VAL          0xFFFF        /* 数值：白 */
 #define C_LOG          0xC618        /* 日志文字：浅灰 */
 
-/* 每个 APP 名字最长 20 字符（240px 能放 30 个字符，留足余量） */
-#define UI_NAME_MAX     20
-
-/*=====================================================================
- * 动图区：显示启动画面图片（240x92，16 色 + 4bpp，见 lcd_img.h）
- *
- * ★ 2026-11-02 换掉了原来的 8 根音柱。
- *   原来的音柱是 16 帧循环 + 只重绘高度变化段，看着像"流体"，用户觉得难看。
- *   现在改成一张静态图片，只在 LCD_UI_Init() 里画一次，主循环里完全不碰。
- *
- * ★ 为什么是 4bpp 调色板而不是 RGB565：
- *   本工程用 MDK-ARM Lite，链接器卡 32KB 镜像上限。
- *   去掉图片后固件已 20820 字节，只剩 11948 字节可用。
- *   240x112 RGB565 要 53760 字节，装不下；
- *   240x92 的 16 色 4bpp 只要 11040 + 32 字节。
- *
- * ★ 图片数据在 lcd_img.h 的 lcd_img_pal[] + lcd_img_data[]。
- *   想换图：改 tools\img2lcd.py 里的 SRC 路径重跑，别手改 lcd_img.h。
- *====================================================================*/
-
 /*=====================================================================
  * 全局状态
  *====================================================================*/
 UI_Status g_ui_status;
 
-static char s_app_name[UI_APP_MAX][UI_NAME_MAX + 1];
-static u8   s_app_count   = 1;
-static u8   s_app_cur     = 0;
-
 /* 缓存：记录上次画上去的值，用来判断要不要重绘 */
 static u8   s_c_sig       = 0xFF;          /* 信号格状态 */
-static u8   s_c_cur       = 0xFF;          /* 当前 APP 序号 */
-static u8   s_c_count     = 0xFF;          /* 列表数量 */
-static char s_c_name[UI_NAME_MAX + 1] = { 0 };
-static char s_c_list[UI_APP_MAX][UI_NAME_MAX + 1];
 static u8   s_c_gprs      = 0xFF;
 static u8   s_c_flash     = 0xFF;
 static u8   s_c_eeprom    = 0xFF;
 static u8   s_c_mqtt      = 0xFF;
+static u8   s_c_app       = 0xFF;          /* APP 运行状态 */
 static u32  s_c_uptime    = 0xFFFFFFFF;
 static u32  s_c_rx        = 0xFFFFFFFF;
 static u32  s_c_event     = 0xFFFFFFFF;
+static char s_c_ver[UI_VER_MAX] = { 0 };
 
 /* 节拍 */
 static u16 s_tick_ui      = 0;
@@ -165,14 +141,6 @@ static void ui_draw_signal(u8 state)
 }
 
 /*=====================================================================
- * 动图区：画启动画面图片（静态，只画一次）
- *====================================================================*/
-static void ui_draw_pic(void)
-{
-    LCD_ShowImage16(0, UI_Y_ANIM, LCD_IMG_W, LCD_IMG_H, lcd_img_pal, lcd_img_data);
-}
-
-/*=====================================================================
  * 状态栏
  *====================================================================*/
 static void ui_draw_statusbar(u8 sig)
@@ -184,47 +152,53 @@ static void ui_draw_statusbar(u8 sig)
 }
 
 /*=====================================================================
- * 当前 APP 名（第二行）
+ * 版本号框（2 倍大字）
+ *
+ * 横向核算：2 倍大字每字符 16px。
+ *           "VER " 4 字符 = 64px（x=2..65），剩下给版本号的起点 x=66，
+ *           240 - 66 = 174px，174 / 16 = 10.875
+ *           ⇒ **最多 10 个字符**（66 + 10*16 = 226 <= 240 ✓，
+ *             11 个会到 242 越界，被 LCD_ShowCharBig 的越界保护整字丢弃）
+ *           Version_ABuff 最长 23 字符，超出部分截断
+ *           （正常版本号如 "1.0.0" 只有 5 个字符）。
+ *
+ * 纵向核算：框 26..59（34px），字 27..58（32px），上下各留 1px ✓
  *====================================================================*/
-static void ui_draw_appname(u8 idx)
+static void ui_draw_version(void)
 {
-    ui_clear_row(UI_Y_APPNAME, C_BG);
-    LCD_ShowString(0, UI_Y_APPNAME, (const u8 *)"APP",
-                   C_LABEL, C_BG, UI_FONT_H, 0);
-    LCD_ShowString(4 * UI_FONT_W, UI_Y_APPNAME,
-                   (const u8 *)s_app_name[idx], C_APPNAME, C_BG, UI_FONT_H, 0);
-}
+    char buf[UI_VER_SHOW_MAX + 1];
+    u8   i;
 
-/*=====================================================================
- * 运行信息区（4 行）
- *   y=160  UP:123s
- *   y=176  4G:OK  FLSH:OK  EEP:OK
- *   y=192  MQTT:OK  RX:42
- *   y=208  EV:20000000
- *====================================================================*/
+    /* 框底色 + 上下 1px 边线（用状态栏同色，看起来像个"卡片"） */
+    LCD_Fill(0, UI_Y_VERBOX, LCD_W - 1, (u16)(UI_Y_VERBOX + UI_VERBOX_H - 1), C_VER_BG);
 
-/* 画一个 "标签 + OK/--" 组合，返回下一个可用 x（尾部留 1 字符空隙）
-   ★ 不能写死坐标：标签长短不一（"4G:" 3 字符、"FLSH:" 5 字符），
-     写死会导致两段粘连或空一大截。 */
-static u16 ui_show_flag(u16 x, u16 y, const char *label, u8 ok)
-{
-    LCD_ShowString(x, y, (const u8 *)label, C_LABEL, C_BG, UI_FONT_H, 0);
-    x = (u16)(x + (u16)strlen(label) * UI_FONT_W);
+    LCD_ShowStringBig(2, UI_Y_VER, (const u8 *)"VER ", C_VER_FG, C_VER_BG);
 
-    if (ok)
+    /* 拷版本号，过滤非 ASCII 并截断到 UI_VER_SHOW_MAX 字符 */
+    for (i = 0; i < UI_VER_SHOW_MAX && g_ui_status.version[i] != 0; i++)
     {
-        LCD_ShowString(x, y, (const u8 *)"OK", C_OK, C_BG, UI_FONT_H, 0);
+        char c = g_ui_status.version[i];
+        if (c < 0x20 || c > 0x7E) c = '.';
+        buf[i] = c;
+    }
+    buf[i] = 0;
+
+    if (i == 0)
+    {
+        LCD_ShowStringBig(66, UI_Y_VER, (const u8 *)"--", C_VER_FG, C_VER_BG);
     }
     else
     {
-        LCD_ShowString(x, y, (const u8 *)"--", C_FAIL, C_BG, UI_FONT_H, 0);
+        LCD_ShowStringBig(66, UI_Y_VER, (const u8 *)buf, C_VER_FG, C_VER_BG);
     }
-    return (u16)(x + 2 * UI_FONT_W + UI_FONT_W);
 }
 
+/*=====================================================================
+ * 上电时间（秒）
+ *====================================================================*/
 static void ui_draw_uptime(u32 sec)
 {
-    u16 y = UI_Y_INFO;
+    u16 y = UI_Y_UPTIME;
     u16 x;
 
     ui_clear_row(y, C_BG);
@@ -235,83 +209,86 @@ static void ui_draw_uptime(u32 sec)
     LCD_ShowString(x, y, (const u8 *)"s", C_VAL, C_BG, UI_FONT_H, 0);
 }
 
-static void ui_draw_periph(void)
-{
-    u16 y = UI_Y_INFO + UI_FONT_H;
-    u16 x = 0;
-
-    ui_clear_row(y, C_BG);
-    x = ui_show_flag(x, y, "4G:",   g_ui_status.gprs_ok);
-    x = ui_show_flag(x, y, "FLSH:", g_ui_status.flash_ok);
-    x = ui_show_flag(x, y, "EEP:",  g_ui_status.eeprom_ok);
-    (void)x;
-}
-
-static void ui_draw_cloud(void)
-{
-    u16 y = UI_Y_INFO + 2 * UI_FONT_H;
-    u16 x = 0;
-
-    ui_clear_row(y, C_BG);
-    x = ui_show_flag(x, y, "MQTT:", g_ui_status.mqtt_ok);
-
-    LCD_ShowString(x, y, (const u8 *)"RX:", C_LABEL, C_BG, UI_FONT_H, 0);
-    x = (u16)(x + 3 * UI_FONT_W);
-    LCD_ShowU32(x, y, g_ui_status.rx_pkts, C_VAL, C_BG, UI_FONT_H);
-}
-
-static void ui_draw_event(u32 ev)
-{
-    u16 y = UI_Y_INFO + 3 * UI_FONT_H;
-
-    ui_clear_row(y, C_BG);
-    LCD_ShowString(0, y, (const u8 *)"EV:", C_LABEL, C_BG, UI_FONT_H, 0);
-    LCD_ShowHex8((u16)(3 * UI_FONT_W), y, ev, C_VAL, C_BG, UI_FONT_H);
-}
-
 /*=====================================================================
- * APP 列表（3 行）
+ * 设备状态（4 行：4G / MQTT / EEP / FLSH）
+ *
+ * 横向核算：标签统一 5 字符宽（"4G   " / "MQTT " / "EEP  " / "FLSH "），
+ *           所以 x=5*8=40 处画 [ OK ] 一定对齐，不会因为标签长短粘连。
  *====================================================================*/
-static void ui_draw_list(void)
+#define UI_DEV_LABEL_X   0
+#define UI_DEV_VAL_X     40
+
+static void ui_draw_dev_row(u16 y, const char *label, u8 ok)
 {
-    u8 i;
+    ui_clear_row(y, C_BG);
 
-    for (i = 0; i < UI_APP_MAX; i++)
-    {
-        u16 y = (u16)(UI_Y_LIST + i * UI_ROW_STEP);
-        u16 fg, bg;
+    LCD_ShowString(UI_DEV_LABEL_X, y, (const u8 *)label, C_LABEL, C_BG, UI_FONT_H, 0);
+    LCD_ShowString(UI_DEV_VAL_X, y, (const u8 *)"[", C_LABEL, C_BG, UI_FONT_H, 0);
 
-        if (i >= s_app_count)
-        {
-            /* 空槽：清成背景，再画一条暗色占位，避免看起来像"没画完" */
-            ui_clear_row(y, C_BG);
-            LCD_ShowString(UI_FONT_W, y, (const u8 *)"---",
-                           C_SIG_OFF, C_BG, UI_FONT_H, 0);
-            s_c_list[i][0] = 0;
-            continue;
-        }
+    if (ok)
+        LCD_ShowString((u16)(UI_DEV_VAL_X + UI_FONT_W), y,
+                       (const u8 *)" OK ", C_OK, C_BG, UI_FONT_H, 0);
+    else
+        LCD_ShowString((u16)(UI_DEV_VAL_X + UI_FONT_W), y,
+                       (const u8 *)" -- ", C_FAIL, C_BG, UI_FONT_H, 0);
 
-        if (i == s_app_cur)
-        {
-            fg = C_SEL_FG;  bg = C_SEL_BG;      /* 选中：蓝底白字 */
-        }
-        else
-        {
-            fg = C_ITEM_FG; bg = C_ITEM_BG;     /* 未选中：黑底浅灰 */
-        }
+    LCD_ShowString((u16)(UI_DEV_VAL_X + 5 * UI_FONT_W), y,
+                   (const u8 *)"]", C_LABEL, C_BG, UI_FONT_H, 0);
+}
 
-        ui_clear_row(y, bg);
-        LCD_ShowString(UI_FONT_W, y, (const u8 *)s_app_name[i],
-                       fg, bg, UI_FONT_H, 0);
+static void ui_draw_dev(void)
+{
+    u16 y = UI_Y_DEV;
 
-        /* 选中项左侧画一个 ">" 标记 */
-        if (i == s_app_cur)
-            LCD_ShowString(0, y, (const u8 *)">", fg, bg, UI_FONT_H, 0);
-    }
+    ui_draw_dev_row(y,                    "4G   ", g_ui_status.gprs_ok);
+    ui_draw_dev_row((u16)(y + UI_DEV_STEP),  "MQTT ", g_ui_status.mqtt_ok);
+    ui_draw_dev_row((u16)(y + 2 * UI_DEV_STEP), "EEP  ", g_ui_status.eeprom_ok);
+    ui_draw_dev_row((u16)(y + 3 * UI_DEV_STEP), "FLSH ", g_ui_status.flash_ok);
 }
 
 /*=====================================================================
- * 日志区（2 行，最新一条在最下面，像控制台）
+ * 运行状态（3 行：APP / 事件标志 / 收包数）
+ *====================================================================*/
+#define UI_RUN_VAL_X     40
+
+static void ui_draw_run_app(void)
+{
+    u16 y = UI_Y_RUN;
+
+    ui_clear_row(y, C_BG);
+    LCD_ShowString(0, y, (const u8 *)"APP  ", C_LABEL, C_BG, UI_FONT_H, 0);
+
+    if (g_ui_status.ota_busy)
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)"OTA UPDATING",
+                       C_SIG_OTA, C_BG, UI_FONT_H, 0);
+    else if (g_ui_status.app_running)
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)"RUNNING",
+                       C_OK, C_BG, UI_FONT_H, 0);
+    else
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)"BOOTING",
+                       C_FAIL, C_BG, UI_FONT_H, 0);
+}
+
+static void ui_draw_run_event(u32 ev)
+{
+    u16 y = (u16)(UI_Y_RUN + UI_RUN_STEP);
+
+    ui_clear_row(y, C_BG);
+    LCD_ShowString(0, y, (const u8 *)"EV   ", C_LABEL, C_BG, UI_FONT_H, 0);
+    LCD_ShowHex8(UI_RUN_VAL_X, y, ev, C_VAL, C_BG, UI_FONT_H);
+}
+
+static void ui_draw_run_rx(void)
+{
+    u16 y = (u16)(UI_Y_RUN + 2 * UI_RUN_STEP);
+
+    ui_clear_row(y, C_BG);
+    LCD_ShowString(0, y, (const u8 *)"RX   ", C_LABEL, C_BG, UI_FONT_H, 0);
+    LCD_ShowU32(UI_RUN_VAL_X, y, g_ui_status.rx_pkts, C_VAL, C_BG, UI_FONT_H);
+}
+
+/*=====================================================================
+ * 日志区（6 行，最新一条在最下面，像控制台）
  *====================================================================*/
 static void ui_draw_log(void)
 {
@@ -321,11 +298,23 @@ static void ui_draw_log(void)
     {
         u16 y = (u16)(UI_Y_LOG + r * UI_LOG_STEP);
         u8  idx = (u8)((s_log_head + r) % UI_LOG_LINES);
+        const char *txt = s_log[idx];
 
         ui_clear_row(y, C_BG);
-        LCD_ShowString(0, y, (const u8 *)">", C_LOG, C_BG, UI_FONT_H, 0);
-        LCD_ShowString(UI_FONT_W, y, (const u8 *)s_log[idx],
-                       C_LOG, C_BG, UI_FONT_H, 0);
+
+        /*
+           ★ 空行不画 ">"：
+             刚开机时日志只有一两条，其余 4~5 行是空的，
+             如果每行都挂一个 ">"，看起来像"这行有内容但内容丢了"。
+             判据用 txt[0] != 0，因为 LCD_Log 填的是完整 29 字符行
+             （不足补空格），空槽的 txt[0] 是 0。
+        */
+        if (txt[0] != 0)
+        {
+            LCD_ShowString(0, y, (const u8 *)">", C_LOG, C_BG, UI_FONT_H, 0);
+            LCD_ShowString(UI_FONT_W, y, (const u8 *)txt,
+                           C_LOG, C_BG, UI_FONT_H, 0);
+        }
     }
 }
 
@@ -353,18 +342,6 @@ void LCD_UI_Init(void)
 
     s_ui_ready = 0;
 
-    /* 默认 APP 列表 */
-    s_app_count = 1;
-    s_app_cur   = 0;
-    for (i = 0; i < UI_APP_MAX; i++)
-    {
-        s_app_name[i][0] = 0;
-        s_c_list[i][0]   = 0;
-    }
-    /* 第 0 个默认叫 OTA（本工程就是 OTA 程序） */
-    s_app_name[0][0] = 'O'; s_app_name[0][1] = 'T';
-    s_app_name[0][2] = 'A'; s_app_name[0][3] = 0;
-
     /* 日志区清空 */
     for (i = 0; i < UI_LOG_LINES; i++)
         s_log[i][0] = 0;
@@ -377,19 +354,15 @@ void LCD_UI_Init(void)
     /* 静态框架 */
     ui_draw_statusbar(0);
     ui_sep(UI_Y_SEP1, 2);
-    ui_draw_appname(s_app_cur);
+    ui_draw_version();
     ui_sep(UI_Y_SEP2, 2);
-    ui_sep(UI_Y_SEP3, 4);
-
-    /* 动图区：画启动画面图片（约 200ms） */
-    ui_draw_pic();
-
     ui_draw_uptime(0);
-    ui_draw_periph();
-    ui_draw_cloud();
-    ui_draw_event(0);
+    ui_sep(UI_Y_SEP3, 2);
+    ui_draw_dev();
     ui_sep(UI_Y_SEP4, 4);
-    ui_draw_list();
+    ui_draw_run_app();
+    ui_draw_run_event(0);
+    ui_draw_run_rx();
     ui_sep(UI_Y_SEP5, 4);
     ui_draw_log();
 
@@ -398,20 +371,19 @@ void LCD_UI_Init(void)
     LCD_Display_On();
 
     /* 缓存置"未知"，逼下一轮把会变的部分重画一遍 */
-    s_c_sig    = 0xFF;
-    s_c_cur    = 0xFF;
-    s_c_count  = 0xFF;
-    s_c_name[0] = 0;
-    s_c_gprs   = 0xFF;
-    s_c_flash  = 0xFF;
-    s_c_eeprom = 0xFF;
-    s_c_mqtt   = 0xFF;
-    s_c_uptime = 0xFFFFFFFF;
-    s_c_rx     = 0xFFFFFFFF;
-    s_c_event  = 0xFFFFFFFF;
+    s_c_sig     = 0xFF;
+    s_c_gprs    = 0xFF;
+    s_c_flash   = 0xFF;
+    s_c_eeprom  = 0xFF;
+    s_c_mqtt    = 0xFF;
+    s_c_app     = 0xFF;
+    s_c_uptime  = 0xFFFFFFFF;
+    s_c_rx      = 0xFFFFFFFF;
+    s_c_event   = 0xFFFFFFFF;
+    s_c_ver[0]  = 0;
 
-    s_tick_ui      = 0;
-    s_uptime_half  = 0;
+    s_tick_ui     = 0;
+    s_uptime_half = 0;
 
     s_ui_ready = 1;
 }
@@ -425,7 +397,7 @@ u8 LCD_UI_Update(void)
     u8 sig   = ui_sig_state();
 
     /*---------- 日志：脏了立刻刷，不受 500ms 节流限制 ----------
-      ★ 只有 2 行缓冲，如果等 500ms 才刷，开机那十几条日志
+      ★ 只有 6 行缓冲，如果等 500ms 才刷，开机那十几条日志
         前面的会被直接覆盖掉，用户根本看不到。 */
     if (s_log_dirty)
     {
@@ -457,66 +429,53 @@ u8 LCD_UI_Update(void)
         dirty = 1;
     }
 
-    /* 外设状态（4G / Flash / EEPROM 任一变化才重画整行） */
-    if (g_ui_status.gprs_ok   != s_c_gprs  ||
-        g_ui_status.flash_ok  != s_c_flash ||
-        g_ui_status.eeprom_ok != s_c_eeprom)
+    /* 版本号（变了才重画，2 倍大字一屏要 512 次 SPI 写 x 字符数，别乱刷） */
+    if (strcmp(g_ui_status.version, s_c_ver) != 0)
     {
-        s_c_gprs   = g_ui_status.gprs_ok;
-        s_c_flash  = g_ui_status.flash_ok;
-        s_c_eeprom = g_ui_status.eeprom_ok;
-        ui_draw_periph();
+        strcpy(s_c_ver, g_ui_status.version);
+        ui_draw_version();
         dirty = 1;
     }
 
-    /* 云连接 + 收包数 */
-    if (g_ui_status.mqtt_ok != s_c_mqtt || g_ui_status.rx_pkts != s_c_rx)
+    /* 设备状态（4G / MQTT / EEP / FLSH 任一变化才重画整块） */
+    if (g_ui_status.gprs_ok   != s_c_gprs  ||
+        g_ui_status.mqtt_ok   != s_c_mqtt  ||
+        g_ui_status.eeprom_ok != s_c_eeprom ||
+        g_ui_status.flash_ok  != s_c_flash)
     {
-        s_c_mqtt = g_ui_status.mqtt_ok;
-        s_c_rx   = g_ui_status.rx_pkts;
-        ui_draw_cloud();
+        s_c_gprs   = g_ui_status.gprs_ok;
+        s_c_mqtt   = g_ui_status.mqtt_ok;
+        s_c_eeprom = g_ui_status.eeprom_ok;
+        s_c_flash  = g_ui_status.flash_ok;
+        ui_draw_dev();
         dirty = 1;
+    }
+
+    /* APP 运行状态（运行中 / OTA 中 / 还在启动） */
+    {
+        u8 app_state = g_ui_status.ota_busy ? 2 : (g_ui_status.app_running ? 1 : 0);
+        if (app_state != s_c_app)
+        {
+            s_c_app = app_state;
+            ui_draw_run_app();
+            dirty = 1;
+        }
     }
 
     /* 事件标志 */
     if (SysEventFlag != s_c_event)
     {
         s_c_event = SysEventFlag;
-        ui_draw_event(s_c_event);
+        ui_draw_run_event(s_c_event);
         dirty = 1;
     }
 
-    /* 当前 APP 名（换 APP 才重画） */
-    if (s_app_cur != s_c_cur ||
-        strcmp(s_app_name[s_app_cur], s_c_name) != 0)
+    /* 收包数 */
+    if (g_ui_status.rx_pkts != s_c_rx)
     {
-        s_c_cur = s_app_cur;
-        strcpy(s_c_name, s_app_name[s_app_cur]);
-        ui_draw_appname(s_app_cur);
+        s_c_rx = g_ui_status.rx_pkts;
+        ui_draw_run_rx();
         dirty = 1;
-    }
-
-    /* 列表（数量或任一名字变化才重画） */
-    {
-        u8 need = 0;
-        if (s_app_count != s_c_count) need = 1;
-        else
-        {
-            u8 i;
-            for (i = 0; i < UI_APP_MAX; i++)
-            {
-                if (strcmp(s_app_name[i], s_c_list[i]) != 0) { need = 1; break; }
-            }
-        }
-        if (need)
-        {
-            u8 i;
-            s_c_count = s_app_count;
-            for (i = 0; i < UI_APP_MAX; i++)
-                strcpy(s_c_list[i], s_app_name[i]);
-            ui_draw_list();
-            dirty = 1;
-        }
     }
 
     return dirty;
@@ -527,68 +486,18 @@ u8 LCD_UI_Update(void)
  *====================================================================*/
 void LCD_UI_Refresh_All(void)
 {
-    u8 i;
-
-    s_c_sig    = 0xFF;
-    s_c_cur    = 0xFF;
-    s_c_count  = 0xFF;
-    s_c_name[0] = 0;
-    s_c_gprs   = 0xFF;
-    s_c_flash  = 0xFF;
-    s_c_eeprom = 0xFF;
-    s_c_mqtt   = 0xFF;
-    s_c_uptime = 0xFFFFFFFF;
-    s_c_rx     = 0xFFFFFFFF;
-    s_c_event  = 0xFFFFFFFF;
-
-    for (i = 0; i < UI_APP_MAX; i++)
-        s_c_list[i][0] = 0;
+    s_c_sig     = 0xFF;
+    s_c_gprs    = 0xFF;
+    s_c_flash   = 0xFF;
+    s_c_eeprom  = 0xFF;
+    s_c_mqtt    = 0xFF;
+    s_c_app     = 0xFF;
+    s_c_uptime  = 0xFFFFFFFF;
+    s_c_rx      = 0xFFFFFFFF;
+    s_c_event   = 0xFFFFFFFF;
+    s_c_ver[0]  = 0;
 
     s_tick_ui = 49;     /* 下一轮立刻刷新状态 */
-}
-
-/*=====================================================================
- * APP 列表接口
- *====================================================================*/
-void LCD_UI_SetAppCount(u8 count)
-{
-    if (count > UI_APP_MAX) count = UI_APP_MAX;
-    if (count == 0)         count = 1;
-    s_app_count = count;
-}
-
-void LCD_UI_SetAppName(u8 idx, const char *name)
-{
-    u8 i;
-
-    if (idx >= UI_APP_MAX || name == NULL) return;
-
-    /* 拷贝并截断到 UI_NAME_MAX 字符，同时过滤非 ASCII（字模只到 0x7E） */
-    for (i = 0; i < UI_NAME_MAX && name[i] != 0; i++)
-    {
-        char c = name[i];
-        if (c < 0x20 || c > 0x7E) c = '.';
-        s_app_name[idx][i] = c;
-    }
-    s_app_name[idx][i] = 0;
-}
-
-void LCD_UI_SetCurrentApp(u8 idx)
-{
-    if (idx >= s_app_count) return;
-    s_app_cur = idx;
-}
-
-u8 LCD_UI_GetCurrentApp(void)
-{
-    return s_app_cur;
-}
-
-void LCD_UI_NextApp(void)
-{
-    if (s_app_count <= 1) return;
-    s_app_cur++;
-    if (s_app_cur >= s_app_count) s_app_cur = 0;
 }
 
 /*=====================================================================
@@ -622,7 +531,7 @@ void LCD_Log(const char *s)
 
     /*
         ★ 立刻刷一次，不等主循环的 500ms 节拍。
-          开机初始化阶段连着打十几条日志，2 行缓冲会被迅速覆盖，
+          开机初始化阶段连着打十几条日志，6 行缓冲会被迅速覆盖，
           必须每条一进来就上屏，用户才能看到完整的启动过程。
           开销：一行 30 字符 = 480 像素 = 960 次 SPI 写 ≈ 7ms，可以接受。
           s_ui_ready 保护：静态框架还没画完时不刷，否则会画到半成品上。

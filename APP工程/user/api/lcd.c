@@ -45,18 +45,17 @@ void LCD_Fill(u16 xsta, u16 ysta, u16 xend, u16 yend, u16 color)
 /**
  *  @brief 在指定位置显示一张 16 色调色板 + 4bpp 索引的图片
  *
+ *  ★ 2026-11-02 第二次改版：屏幕改成纯状态面板后，启动图片被用户砍掉了，
+ *    这个函数目前【没有任何调用点】。留着是因为以后想加图标（比如信号图标、
+ *    状态小图标）可以直接用，比重新写一遍省事。
+ *    如果哪天要省 Flash，删掉这个函数和 lcd.h 里的声明即可（约省 300 字节）。
+ *
  *  @param xsta 起始 x
  *  @param ysta 起始 y
  *  @param w    图片宽（必须是偶数）
  *  @param h    图片高
  *  @param pal  调色板，16 个 RGB565 值
  *  @param idx  像素索引，4bpp，行主序，每字节两个像素（高半字节在前）
- *
- *  ★ 为什么是 4bpp 而不是 RGB565：
- *    本工程用 MDK-ARM Lite，链接器卡 32KB 镜像上限。
- *    去掉图片后固件已 20820 字节，只剩 11948 字节可用，
- *    240x112 的 RGB565 要 53760 字节，装不下。
- *    4bpp 每像素半字节，240x92 只要 11040 字节 + 32 字节调色板。
  *
  *  ★ 性能优化：整幅图只调一次 LCD_Address_Set（设成 w x h 的窗口），
  *    之后连续 LCD_WR_DATA 让 ST7789V 自己递增地址。
@@ -212,6 +211,67 @@ void LCD_ShowChar(u16 x, u16 y, u8 num, u16 fc, u16 bc, u8 sizey, u8 mode)
                 }
             }
         }
+    }
+}
+
+/**
+ *  @brief 显示 2 倍放大的字符（8x16 字模 → 16x32 像素）
+ *
+ *  ★ 为什么单独写一个而不是给 LCD_ShowChar 加缩放参数：
+ *    字模表 ascii_1608 只有 8x16 一种，加缩放参数要在每个像素上乘系数，
+ *    会把 LCD_ShowChar 这个最热的函数拖慢（它是逐字节写显存的）。
+ *    单独一个函数只在开机画版本号时调用几次，慢一点无所谓。
+ *
+ *  ★ 像素铺法：先算字模字节 → 每个 bit 横竖各复制 2 份。
+ *    线性序号 p (0..511)：字节 i = p / 16，行内 bit t = (p % 16) / 2，
+ *    屏幕坐标 px = x + p % 16，py = y + p / 16。
+ *    （16 = 8 * 2，即放大后的字宽）
+ *
+ *  @param x     左上角 x
+ *  @param y     左上角 y
+ *  @param num   ASCII 字符 0x20~0x7E
+ *  @param fc    前景色
+ *  @param bc    背景色
+ */
+void LCD_ShowCharBig(u16 x, u16 y, u8 num, u16 fc, u16 bc)
+{
+    u16 i = 0;
+    u16 p = 0;
+    u8  temp = 0;
+
+    /* 放大后是 16x32，越界直接不画（宁可不显示，也不要花屏） */
+    if (x >= LCD_W || y >= LCD_H) return;
+    if ((u16)(x + 16) > LCD_W || (u16)(y + 32) > LCD_H) return;
+
+    if (num < ' ' || num > '~') num = ' ';
+    num = (u8)(num - ' ');
+
+    /* 整块 16x32 只设一次窗口，之后连续写，让 ST7789V 自己递增地址 */
+    LCD_Address_Set(x, y, (u16)(x + 15), (u16)(y + 31));
+
+    for (i = 0; i < 16; i++)
+    {
+        temp = ascii_1608[num][i];
+
+        for (p = 0; p < 16; p++)
+        {
+            /* p/2 = 字模里的第几列（0..7），因为每列横着复制 2 份 */
+            if (temp & (0x01 << (p >> 1))) LCD_WR_DATA(fc);
+            else                           LCD_WR_DATA(bc);
+        }
+    }
+}
+
+/**
+ *  @brief 显示 2 倍放大的字符串
+ */
+void LCD_ShowStringBig(u16 x, u16 y, const u8 *p, u16 fc, u16 bc)
+{
+    while (*p != '\0')
+    {
+        LCD_ShowCharBig(x, y, *p, fc, bc);
+        x = (u16)(x + 16);
+        p++;
     }
 }
 
