@@ -4,27 +4,29 @@
 #include "common.h"
 
 /*
-	中景园 1.8 寸 TFT (ST7735S) 驱动 —— 引脚定义与底层时序
+	2.4 寸 TFT (ST7789V) 驱动 —— 引脚定义与底层时序
 	==================================================================
-	来源: D:\K_Work\SmartHome_v21\MASTER\user\api\lcd_init.c
-	（SmartHome 工程同样跑在战神V1 主板上，引脚分配可直接沿用）
-
-	屏幕规格:
-	  驱动 IC  : ST7735S
-	  分辨率   : 128 x 160
+	屏幕型号: 10P-2D4TFT_V2.1
+	  驱动 IC  : ST7789V
+	  分辨率   : 240 x 320
 	  接口     : 4 线 SPI (SCL/SDA/RES/DC/CS/BLK)
-	  模块引脚 : BLK CS DC RST SDA SCL VDD GND  (8 针)
+	  模块引脚 : 10 针
 
-	★ 引脚分配: 官方例程是 PA5/PA7/PA1/PA2/PA3/PA4, 但【不能照抄】!
-	  原因: 战神V1 主机板上
-	    PA2 = USART2_TX -> RS485 DI
-	    PA3 = USART2_RX <- RS485 RO
-	    PA4 = ESP8266 CH_PD (模块使能, 拉低就关断)
-	  照抄会把 485 和 WiFi 一起废掉。
+	★ 从 ST7735S 换成 ST7789V 改了什么（不只是改尺寸）:
+	  1. 分辨率 128x160 -> 240x320，帧缓冲概念上大了 3.75 倍，
+	     全屏填充从 40960 次 SPI 写涨到 153600 次，约 560ms。
+	     所以 UI 层绝不能每帧全屏重画，必须只重绘变化区域。
+	  2. 初始化序列完全不同。ST7789V 没有 ST7735S 的 B1/B2/B3/B4 帧率寄存器，
+	     改成了 PORCTRL(B2)/FRCTRL2(C6)/PWCTRL1(D0)/GCTRL(E0)/GATECTRL(E4) 等。
+	  3. 伽马校正寄存器从 16 个(E0/E1) 变成 14 个(E0/E1 各 7 参数)。
+	  4. MADCTL(0x36) 的位含义一致，但取值要按新分辨率重算。
+	  5. 像素格式 COLMOD(0x3A) = 0x55（16bit RGB565），
+	     而 ST7735S 那份写的是 0x05 —— 两个芯片对 0x05 的解释不一样，
+	     0x05 在 ST7789V 上是 16bit，但官方推荐 0x55，这里用 0x55。
+	  6. ST7789V 有 GRAM 偏移（240x320 的显存是 240x320，但有些模组
+	     可视区小于显存），这里按整屏无偏移处理，偏移量宏留空方便调整。
 
-	  所以数据线保留 SPI1 的默认脚(不重映射时唯一选择),
-	  控制线全部挪到手册标注"完全独立"的空闲脚:
-
+	★ 引脚分配（与 ST7735S 那份完全一致，不用改接线）:
 	    SCL  -> PA5   (SPI1_SCK,  唯一选择)
 	    SDA  -> PA7   (SPI1_MOSI, 唯一选择)
 	    RES  -> PA1   (空闲, 拔 P10 跳线帽后完全独立)
@@ -34,9 +36,12 @@
 
 	  VDD -> 3.3V, GND -> GND
 
-	★ 接线注意(8 针模块, 背面丝印从左到右):
-	    BLK  CS  DC  RST  SDA  SCL  VDD  GND
-	  按上面这张表对应接, 不要按丝印顺序想当然。
+	★ 为什么不能照抄官方例程的 PA5/PA7/PA1/PA2/PA3/PA4:
+	    战神V1 主机板上
+	      PA2 = USART2_TX -> RS485 DI
+	      PA3 = USART2_RX <- RS485 RO
+	      PA4 = ESP8266 CH_PD (模块使能, 拉低就关断)
+	    照抄会把 485 和 WiFi 一起废掉。
 
 	★ 本工程与 SmartHome 的差异(移植时改的):
 	  1. 去掉 log.h 依赖, 直接调 Usart1_SendString
@@ -44,16 +49,24 @@
 	  3. 引脚宏全部改成寄存器风格, 与 common.h 统一
 */
 
-/* ---- 屏幕尺寸 (竖屏 128x160) ---- */
-#define USE_HORIZONTAL  1       /* 0/1 = 竖屏 128x160, 2/3 = 横屏 160x128 */
+/* ---- 屏幕尺寸 (竖屏 240x320) ---- */
+#define USE_HORIZONTAL  1       /* 0/1 = 竖屏 240x320, 2/3 = 横屏 320x240 */
 
 #if (USE_HORIZONTAL == 0) || (USE_HORIZONTAL == 1)
-#define LCD_W 128
-#define LCD_H 160
+#define LCD_W 240
+#define LCD_H 320
 #else
-#define LCD_W 160
-#define LCD_H 128
+#define LCD_W 320
+#define LCD_H 240
 #endif
+
+/* ---- GRAM 偏移 ----
+ * ST7789V 的显存固定 240x320，多数模组可视区就是整屏，偏移为 0。
+ * 如果烧上去发现画面整体偏移若干像素（常见 0/1/2 像素错位或边缘有彩条），
+ * 就改这两个值试：常见组合是 (0,0)、(0,80)、(80,0)。
+ * 320x240 的模组（可视区 240x320 但显存 320x240 那种）通常需要 (0,0)。 */
+#define LCD_X_OFFSET    0
+#define LCD_Y_OFFSET    0
 
 /* ---- 控制引脚 (★ 已避开 PA2/PA3/PA4) ---- */
 

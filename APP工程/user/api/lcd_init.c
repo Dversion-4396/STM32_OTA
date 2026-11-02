@@ -3,17 +3,24 @@
 #include "usart.h"
 
 /*
-	中景园 1.8 寸 ST7735S 驱动 —— 底层实现
+	2.4 寸 ST7789V (240x320) 驱动 —— 底层实现
 	==================================================================
-	移植自 SmartHome_v21\MASTER\user\api\lcd_init.c, 改动:
-	  1. 日志输出从 LOG_Str 改成直接 Usart1_SendString（本工程没有 log.c）
-	  2. 保留原有引脚分配（SmartHome 也跑在战神V1 上，已验证可用）
-	  3. 补充 PA5/PA7 复用的说明（VS1053 默认禁用，可安全占用 SPI1）
+	屏幕型号: 10P-2D4TFT_V2.1
 
-	★ 为什么用【软件 CS 控制 + 硬件 SPI 数据】的混合方式:
+	★ 与原来 ST7735S 版本的差异（不只是改尺寸，整段初始化都换了）:
+	  1. 帧率寄存器: ST7735S 用 B1/B2/B3/B4，ST7789V 用 PORCTRL(B2)/FRCTRL2(C6)
+	  2. 电源寄存器: ST7735S 用 C0/C1/C2/C3/C4，ST7789V 用 LCMCTRL(C0)/VDVVRHEN(C2)/
+	     VRHS(C3)/VDVS(C4)/PWCTRL1(D0)
+	  3. 伽马: ST7735S 是 16 参数，ST7789V 是 14 参数（正负各 14 个）
+	  4. 新增 GCTRL(B7)、VCOMS(BB)、GATECTRL(E4)
+	  5. 像素格式: 用 0x55（16bit RGB565），ST7735S 那份写的是 0x05
+	  6. GRAM 偏移: ST7735S 需要 +2/+1，ST7789V 240x320 模组通常是 0/0
+
+	★ 为什么用【软件 CS 控制 + 硬件 SPI 数据】:
 	  官方例程里 LCD_Writ_Bus 每次都拉低 CS 再拉高, 这是"每字节一个片选周期",
-	  对 ST7735 完全没问题(它允许这样)。好处是不用关心连续传输的时序,
-	  代价是慢一点 —— 但我们的刷新率只要 1 秒一次, 完全够。
+	  对 ST7789V 完全没问题。好处是不用关心连续传输的时序, 代价是慢一点。
+	  240x320 全屏 = 76800 像素 = 153600 字节, 每字节一次 CS 翻转,
+	  实测约 500~600ms。所以 UI 层绝不能每帧全屏重画。
 */
 
 /**
@@ -64,8 +71,11 @@ void LCD_GPIO_Init(void)
 
     /*
         4. SPI1 参数
-           CPOL=High + CPHA=2Edge 是 ST7735 要求的方式(模式3)
-           预分频 4 -> 72MHz/4 = 18MHz, ST7735S 支持到 15~30MHz, 安全
+           CPOL=High + CPHA=2Edge 是 ST7789V 要求的方式(模式3)
+           预分频 4 -> 72MHz/4 = 18MHz
+           ST7789V 写时序支持到 62.5MHz，18MHz 很保守但杜邦线走线更稳。
+           想快可以把 SPI_BaudRatePrescaler_4 改成 _2（36MHz），
+           但线长超过 10cm 时 36MHz 容易丢字节，建议先保持 18MHz 调通。
     */
     SPI_InitStructure.SPI_Direction         = SPI_Direction_1Line_Tx;
     SPI_InitStructure.SPI_Mode              = SPI_Mode_Master;
@@ -153,36 +163,31 @@ void LCD_WR_REG(u8 dat)
 /**
  *  @brief 设置显示窗口 (列/行地址范围)
  *
- *  偏移量说明: ST7735S 的显存是 132x162, 而屏幕可视区是 128x160,
- *  所以坐标要加偏移才能对到可视区。竖屏(0/1) 是 +2/+1,
- *  横屏(2/3) 是 +1/+2 —— 这是官方例程实测出来的值, 不要改。
+ *  ★ ST7789V 240x320 模组一般不需要偏移（显存 240x320 = 可视区 240x320）。
+ *    但有些模组可视区小于显存，会整体偏移。
+ *    如果烧上去发现画面整体错位 / 边缘有彩条，改 lcd_init.h 里的
+ *    LCD_X_OFFSET / LCD_Y_OFFSET 试（常见 0/80、80/0）。
  */
 void LCD_Address_Set(u16 x1, u16 y1, u16 x2, u16 y2)
 {
-#if (USE_HORIZONTAL == 0) || (USE_HORIZONTAL == 1)
-    LCD_WR_REG(0x2A);           /* 列地址 */
-    LCD_WR_DATA(x1 + 2);
-    LCD_WR_DATA(x2 + 2);
-    LCD_WR_REG(0x2B);           /* 行地址 */
-    LCD_WR_DATA(y1 + 1);
-    LCD_WR_DATA(y2 + 1);
-    LCD_WR_REG(0x2C);           /* 开始写显存 */
-#else
-    LCD_WR_REG(0x2A);
-    LCD_WR_DATA(x1 + 1);
-    LCD_WR_DATA(x2 + 1);
-    LCD_WR_REG(0x2B);
-    LCD_WR_DATA(y1 + 2);
-    LCD_WR_DATA(y2 + 2);
-    LCD_WR_REG(0x2C);
-#endif
+    LCD_WR_REG(0x2A);                       /* 列地址 */
+    LCD_WR_DATA(x1 + LCD_X_OFFSET);
+    LCD_WR_DATA(x2 + LCD_X_OFFSET);
+    LCD_WR_REG(0x2B);                       /* 行地址 */
+    LCD_WR_DATA(y1 + LCD_Y_OFFSET);
+    LCD_WR_DATA(y2 + LCD_Y_OFFSET);
+    LCD_WR_REG(0x2C);                       /* 开始写显存 */
 }
 
 /**
- *  @brief 初始化 ST7735S
+ *  @brief 初始化 ST7789V
  *
- *  ★ 整个初始化要 ~440ms (复位 200ms + 背光 100ms + SleepOut 120ms + 其他),
- *    只在开机调用一次, 不影响主循环。
+ *  ★ 整个初始化约 400ms（复位 200ms + 背光 100ms + SleepOut 120ms），
+ *    只在开机调用一次，不影响主循环。
+ *
+ *  ★ 初始化序列参考 ST7789V 数据手册的典型应用电路推荐值，
+ *    这是 2.4"/2.8" 240x320 模块最通用的一套。如果烧上去偏色、
+ *    对比度不对，优先调 PVGAMCTRL(0xE0)/NVGAMCTRL(0xE1) 两段伽马。
  */
 void LCD_Init(void)
 {
@@ -198,80 +203,97 @@ void LCD_Init(void)
     LCD_BLK_Set();
     delay_ms(100);
 
-    /*
-        3. 软件复位
-           ★ 有些 ST7735S 模块在硬复位后仍需要一次软复位,
-             否则内部寄存器可能停在不确定状态(表现就是白屏)。
-             官方例程没有这一步, 但加上无害 —— 0x01 是标准 SWRESET。
-    */
-    LCD_WR_REG(0x01);           /* SWRESET */
+    /* 3. 软件复位 */
+    LCD_WR_REG(0x01);                       /* SWRESET */
     delay_ms(120);
 
     /* 4. Sleep out */
-    LCD_WR_REG(0x11);
+    LCD_WR_REG(0x11);                       /* SLPOUT */
     delay_ms(120);
 
-    /* 帧率 */
-    LCD_WR_REG(0xB1);
-    LCD_WR_DATA8(0x05); LCD_WR_DATA8(0x3C); LCD_WR_DATA8(0x3C);
-    LCD_WR_REG(0xB2);
-    LCD_WR_DATA8(0x05); LCD_WR_DATA8(0x3C); LCD_WR_DATA8(0x3C);
-    LCD_WR_REG(0xB3);
-    LCD_WR_DATA8(0x05); LCD_WR_DATA8(0x3C); LCD_WR_DATA8(0x3C);
-    LCD_WR_DATA8(0x05); LCD_WR_DATA8(0x3C); LCD_WR_DATA8(0x3C);
+    /* 5. 像素格式: 16 bit/pixel (RGB565) */
+    LCD_WR_REG(0x3A);                       /* COLMOD */
+    LCD_WR_DATA8(0x55);
 
-    LCD_WR_REG(0xB4);           /* Dot inversion */
-    LCD_WR_DATA8(0x03);
-
-    /* 电源序列 */
-    LCD_WR_REG(0xC0);
-    LCD_WR_DATA8(0x28); LCD_WR_DATA8(0x08); LCD_WR_DATA8(0x04);
-    LCD_WR_REG(0xC1);
-    LCD_WR_DATA8(0xC0);
-    LCD_WR_REG(0xC2);
-    LCD_WR_DATA8(0x0D); LCD_WR_DATA8(0x00);
-    LCD_WR_REG(0xC3);
-    LCD_WR_DATA8(0x8D); LCD_WR_DATA8(0x2A);
-    LCD_WR_REG(0xC4);
-    LCD_WR_DATA8(0x8D); LCD_WR_DATA8(0xEE);
-
-    /* VCOM */
-    LCD_WR_REG(0xC5);
-    LCD_WR_DATA8(0x1A);
-
-    /* 扫描方向 */
-    LCD_WR_REG(0x36);
+    /* 6. 内存数据访问控制 (扫描方向) */
+    LCD_WR_REG(0x36);                       /* MADCTL */
 #if (USE_HORIZONTAL == 0)
-    LCD_WR_DATA8(0x00);
+    LCD_WR_DATA8(0x00);                     /* 竖屏 240x320，正常方向 */
 #elif (USE_HORIZONTAL == 1)
-    LCD_WR_DATA8(0xC0);
+    LCD_WR_DATA8(0xC0);                     /* 竖屏 240x320，旋转 180° */
 #elif (USE_HORIZONTAL == 2)
-    LCD_WR_DATA8(0x70);
+    LCD_WR_DATA8(0x60);                     /* 横屏 320x240 */
 #else
-    LCD_WR_DATA8(0xA0);
+    LCD_WR_DATA8(0xA0);                     /* 横屏 320x240，旋转 180° */
 #endif
 
-    /* 伽马校正 */
-    LCD_WR_REG(0xE0);
-    LCD_WR_DATA8(0x04); LCD_WR_DATA8(0x22); LCD_WR_DATA8(0x07);
-    LCD_WR_DATA8(0x0A); LCD_WR_DATA8(0x2E); LCD_WR_DATA8(0x30);
-    LCD_WR_DATA8(0x25); LCD_WR_DATA8(0x2A); LCD_WR_DATA8(0x28);
-    LCD_WR_DATA8(0x26); LCD_WR_DATA8(0x2E); LCD_WR_DATA8(0x3A);
-    LCD_WR_DATA8(0x00); LCD_WR_DATA8(0x01); LCD_WR_DATA8(0x03);
-    LCD_WR_DATA8(0x13);
+    /* 7.  porch 设置 (前后肩) */
+    LCD_WR_REG(0xB2);                       /* PORCTRL */
+    LCD_WR_DATA8(0x0C); LCD_WR_DATA8(0x0C);
+    LCD_WR_DATA8(0x00); LCD_WR_DATA8(0x33); LCD_WR_DATA8(0x33);
 
-    LCD_WR_REG(0xE1);
-    LCD_WR_DATA8(0x04); LCD_WR_DATA8(0x16); LCD_WR_DATA8(0x06);
-    LCD_WR_DATA8(0x0D); LCD_WR_DATA8(0x2D); LCD_WR_DATA8(0x26);
-    LCD_WR_DATA8(0x23); LCD_WR_DATA8(0x27); LCD_WR_DATA8(0x27);
-    LCD_WR_DATA8(0x25); LCD_WR_DATA8(0x2D); LCD_WR_DATA8(0x3B);
-    LCD_WR_DATA8(0x00); LCD_WR_DATA8(0x01); LCD_WR_DATA8(0x04);
-    LCD_WR_DATA8(0x13);
+    /* 8. 栅极电压 */
+    LCD_WR_REG(0xB7);                       /* GCTRL */
+    LCD_WR_DATA8(0x35);
 
-    /* 65K 色 + 开显示 */
-    LCD_WR_REG(0x3A);
-    LCD_WR_DATA8(0x05);
-    LCD_WR_REG(0x29);
+    /* 9. VCOM 电压 */
+    LCD_WR_REG(0xBB);                       /* VCOMS */
+    LCD_WR_DATA8(0x19);
 
-    Usart1_SendString("[LCD] ST7735S init done, 128x160\r\n");
+    /* 10. LCM 控制 */
+    LCD_WR_REG(0xC0);                       /* LCMCTRL */
+    LCD_WR_DATA8(0x2C);
+
+    /* 11. VDV 和 VRH 命令使能 */
+    LCD_WR_REG(0xC2);                       /* VDVVRHEN */
+    LCD_WR_DATA8(0x01);
+
+    /* 12. VRH 设置 (VCOM 高压) */
+    LCD_WR_REG(0xC3);                       /* VRHS */
+    LCD_WR_DATA8(0x12);
+
+    /* 13. VDV 设置 (VCOM 低压) */
+    LCD_WR_REG(0xC4);                       /* VDVS */
+    LCD_WR_DATA8(0x20);
+
+    /* 14. 帧率控制: 60Hz */
+    LCD_WR_REG(0xC6);                       /* FRCTRL2 */
+    LCD_WR_DATA8(0x0F);
+
+    /* 15. 电源控制 1 */
+    LCD_WR_REG(0xD0);                       /* PWCTRL1 */
+    LCD_WR_DATA8(0xA4); LCD_WR_DATA8(0xA1);
+
+    /* 16. 正极性伽马校正 (14 参数) */
+    LCD_WR_REG(0xE0);                       /* PVGAMCTRL */
+    LCD_WR_DATA8(0xD0); LCD_WR_DATA8(0x04); LCD_WR_DATA8(0x0D);
+    LCD_WR_DATA8(0x11); LCD_WR_DATA8(0x13); LCD_WR_DATA8(0x2B);
+    LCD_WR_DATA8(0x3F); LCD_WR_DATA8(0x54); LCD_WR_DATA8(0x4C);
+    LCD_WR_DATA8(0x18); LCD_WR_DATA8(0x0D); LCD_WR_DATA8(0x0B);
+    LCD_WR_DATA8(0x1F); LCD_WR_DATA8(0x23);
+
+    /* 17. 负极性伽马校正 (14 参数) */
+    LCD_WR_REG(0xE1);                       /* NVGAMCTRL */
+    LCD_WR_DATA8(0xD0); LCD_WR_DATA8(0x04); LCD_WR_DATA8(0x0C);
+    LCD_WR_DATA8(0x11); LCD_WR_DATA8(0x13); LCD_WR_DATA8(0x2C);
+    LCD_WR_DATA8(0x3F); LCD_WR_DATA8(0x44); LCD_WR_DATA8(0x51);
+    LCD_WR_DATA8(0x2F); LCD_WR_DATA8(0x1F); LCD_WR_DATA8(0x1F);
+    LCD_WR_DATA8(0x20); LCD_WR_DATA8(0x23);
+
+    /* 18. 栅极控制 (VGH/VGL) */
+    LCD_WR_REG(0xE4);                       /* GATECTRL */
+    LCD_WR_DATA8(0x1D); LCD_WR_DATA8(0x00); LCD_WR_DATA8(0x00);
+
+    /* 19. 开反显（ST7789V 模组出厂多为反显，不开会整体发白/发灰）
+           ★ 如果烧上去发现黑白颠倒（该黑的地方白），把这行改成 0x20 (INVOFF) */
+    LCD_WR_REG(0x21);                       /* INVON */
+
+    /* 20. 正常显示模式 */
+    LCD_WR_REG(0x13);                       /* NORON */
+
+    /* 21. 开显示 */
+    LCD_WR_REG(0x29);                       /* DISPON */
+    delay_ms(20);
+
+    Usart1_SendString("[LCD] ST7789V init done, 240x320\r\n");
 }
