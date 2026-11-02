@@ -97,6 +97,7 @@
 /* ---- 底层接口 ---- */
 void LCD_GPIO_Init(void);
 void LCD_Init(void);
+void LCD_Display_On(void);
 void LCD_Writ_Bus(u8 dat);
 void LCD_WR_DATA8(u8 dat);
 void LCD_WR_DATA(u16 dat);

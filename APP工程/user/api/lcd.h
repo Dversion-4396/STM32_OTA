@@ -4,17 +4,18 @@
 #include "common.h"
 
 /*
-	中景园 1.8 寸 TFT (ST7735S) 绘图接口
+	中景园 TFT 绘图接口
 	==================================================================
 	来源: D:\K_Work\SmartHome_v21\MASTER\user\api\lcd.h
 
 	★ 只保留本项目实际用到的函数, 去掉了:
 	    - 中文显示 (需要 4 套汉字字模, 体积大)
 	    - 画圆 / 画线 / 画矩形 (界面不需要)
-	    - 显示图片 (需要 16KB 图片表)
 	  这样省下约 20KB Flash。以后需要中文再单独加字模。
+	★ 2026-11-02 加回图片显示 LCD_ShowImage16（原版注释说"需要 16KB 图片表"所以删了，
+	  但现在启动画面要用，240x112 RGB565 = 53760 字节，放 lcd_img.h）。
 
-	坐标系统: 竖屏 128x160, (0,0) 在左上角
+	坐标系统: 竖屏 240x320, (0,0) 在左上角
 	颜色格式: RGB565 (16 位)
 */
 
@@ -36,6 +37,9 @@
 /* ---- 填充与画点 ---- */
 void LCD_Fill(u16 xsta, u16 ysta, u16 xend, u16 yend, u16 color);
 void LCD_DrawPoint(u16 x, u16 y, u16 color);
+
+/* ---- 图片（16 色调色板 + 4bpp 索引） ---- */
+void LCD_ShowImage16(u16 xsta, u16 ysta, u16 w, u16 h, const u16 *pal, const u8 *idx);
 
 /* ---- 字符与字符串 ---- */
 void LCD_ShowChar(u16 x, u16 y, u8 num, u16 fc, u16 bc, u8 sizey, u8 mode);

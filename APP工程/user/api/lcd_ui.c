@@ -25,6 +25,7 @@
 #include "lcd_ui.h"
 #include "lcd.h"
 #include "lcd_init.h"
+#include "lcd_img.h"
 
 /*=====================================================================
  * 配色（RGB565）
@@ -52,28 +53,21 @@
 #define UI_NAME_MAX     20
 
 /*=====================================================================
- * 动图：8 根音柱，16 帧循环
- * 每帧 8 个高度值，范围 12..104（柱底 y=UI_VU_BASE=155，向上生长，
- * 最高柱顶 y = 155-104+1 = 52，落在动图区 44..155 内）
+ * 动图区：显示启动画面图片（240x92，16 色 + 4bpp，见 lcd_img.h）
+ *
+ * ★ 2026-11-02 换掉了原来的 8 根音柱。
+ *   原来的音柱是 16 帧循环 + 只重绘高度变化段，看着像"流体"，用户觉得难看。
+ *   现在改成一张静态图片，只在 LCD_UI_Init() 里画一次，主循环里完全不碰。
+ *
+ * ★ 为什么是 4bpp 调色板而不是 RGB565：
+ *   本工程用 MDK-ARM Lite，链接器卡 32KB 镜像上限。
+ *   去掉图片后固件已 20820 字节，只剩 11948 字节可用。
+ *   240x112 RGB565 要 53760 字节，装不下；
+ *   240x92 的 16 色 4bpp 只要 11040 + 32 字节。
+ *
+ * ★ 图片数据在 lcd_img.h 的 lcd_img_pal[] + lcd_img_data[]。
+ *   想换图：改 tools\img2lcd.py 里的 SRC 路径重跑，别手改 lcd_img.h。
  *====================================================================*/
-static const u8 s_vu[16][8] = {
-    {  58,  91, 104,  91,  58,  25,  12,  25 },
-    {  75, 100, 100,  75,  41,  16,  16,  41 },
-    {  91, 104,  91,  58,  25,  12,  25,  58 },
-    { 100, 100,  75,  41,  16,  16,  41,  75 },
-    { 104,  91,  58,  25,  12,  25,  58,  91 },
-    { 100,  75,  41,  16,  16,  41,  75, 100 },
-    {  91,  58,  25,  12,  25,  58,  91, 104 },
-    {  75,  41,  16,  16,  41,  75, 100, 100 },
-    {  58,  25,  12,  25,  58,  91, 104,  91 },
-    {  41,  16,  16,  41,  75, 100, 100,  75 },
-    {  25,  12,  25,  58,  91, 104,  91,  58 },
-    {  16,  16,  41,  75, 100, 100,  75,  41 },
-    {  12,  25,  58,  91, 104,  91,  58,  25 },
-    {  16,  41,  75, 100, 100,  75,  41,  16 },
-    {  25,  58,  91, 104,  91,  58,  25,  12 },
-    {  41,  75, 100, 100,  75,  41,  16,  16 },
-};
 
 /*=====================================================================
  * 全局状态
@@ -99,10 +93,7 @@ static u32  s_c_rx        = 0xFFFFFFFF;
 static u32  s_c_event     = 0xFFFFFFFF;
 
 /* 节拍 */
-static u16 s_tick_anim    = 0;
 static u16 s_tick_ui      = 0;
-static u8  s_vu_frame     = 0;
-static u8  s_vu_prev[UI_VU_COUNT] = { 0 };
 
 /* 运行时长（单位：0.5 秒，因为每 50 轮 ≈ 500ms 加一次） */
 static u32 s_uptime_half = 0;
@@ -141,17 +132,6 @@ static u8 ui_digits(u32 n)
     return d;
 }
 
-/* 柱高 → 颜色（自下而上：绿 → 青 → 黄 → 橙 → 红）
-   高度范围 12..104，按 5 段均分：12~23 / 24~47 / 48~71 / 72~91 / 92~104 */
-static u16 ui_vu_color(u8 h)
-{
-    if (h < 24)      return 0x07E0;   /* 绿 */
-    else if (h < 48) return 0x07FF;   /* 青 */
-    else if (h < 72) return 0xFFE0;   /* 黄 */
-    else if (h < 92) return 0xFD20;   /* 橙 */
-    else             return 0xF800;   /* 红 */
-}
-
 /*=====================================================================
  * 状态栏右上角：4 格信号
  * 都没连=全灭 / 只有4G=3格 / MQTT通=4格 / OTA中=闪红
@@ -185,39 +165,11 @@ static void ui_draw_signal(u8 state)
 }
 
 /*=====================================================================
- * 动图区：只重绘高度发生变化的柱段
+ * 动图区：画启动画面图片（静态，只画一次）
  *====================================================================*/
-static void ui_draw_vu(u8 frame)
+static void ui_draw_pic(void)
 {
-    u8 k;
-    const u8 *cur = s_vu[frame & 0x0F];
-
-    for (k = 0; k < UI_VU_COUNT; k++)
-    {
-        u8  h_new = cur[k];
-        u8  h_old = s_vu_prev[k];
-        u16 x = (u16)(UI_VU_X0 + k * (UI_VU_W + UI_VU_GAP));
-        u16 y_new_top = (u16)(UI_VU_BASE - h_new + 1);
-        u16 y_old_top = (u16)(UI_VU_BASE - h_old + 1);
-
-        if (h_new == h_old)
-            continue;                        /* 没变，不动它 */
-
-        if (h_new > h_old)
-        {
-            /* 变高了：只画新长出来的那一段 */
-            LCD_Fill(x, y_new_top, (u16)(x + UI_VU_W - 1),
-                     (u16)(y_old_top - 1), ui_vu_color(h_new));
-        }
-        else
-        {
-            /* 变矮了：把顶部那一段擦回背景 */
-            LCD_Fill(x, y_old_top, (u16)(x + UI_VU_W - 1),
-                     (u16)(y_new_top - 1), C_BG);
-        }
-
-        s_vu_prev[k] = h_new;
-    }
+    LCD_ShowImage16(0, UI_Y_ANIM, LCD_IMG_W, LCD_IMG_H, lcd_img_pal, lcd_img_data);
 }
 
 /*=====================================================================
@@ -428,6 +380,10 @@ void LCD_UI_Init(void)
     ui_draw_appname(s_app_cur);
     ui_sep(UI_Y_SEP2, 2);
     ui_sep(UI_Y_SEP3, 4);
+
+    /* 动图区：画启动画面图片（约 200ms） */
+    ui_draw_pic();
+
     ui_draw_uptime(0);
     ui_draw_periph();
     ui_draw_cloud();
@@ -437,10 +393,9 @@ void LCD_UI_Init(void)
     ui_sep(UI_Y_SEP5, 4);
     ui_draw_log();
 
-    /* 动图区清干净 */
-    LCD_Fill(0, UI_Y_ANIM, LCD_W - 1, (u16)(UI_Y_ANIM + UI_ANIM_H - 1), C_BG);
-    for (i = 0; i < UI_VU_COUNT; i++)
-        s_vu_prev[i] = 0;
+    /* ★ 全画完了才开显示：LCD_Init() 里是 DISPOFF 状态，
+       这里开显示，用户第一眼看到的就是完整界面，不会闪花屏 */
+    LCD_Display_On();
 
     /* 缓存置"未知"，逼下一轮把会变的部分重画一遍 */
     s_c_sig    = 0xFF;
@@ -455,9 +410,7 @@ void LCD_UI_Init(void)
     s_c_rx     = 0xFFFFFFFF;
     s_c_event  = 0xFFFFFFFF;
 
-    s_tick_anim    = 0;
     s_tick_ui      = 0;
-    s_vu_frame     = 0;
     s_uptime_half  = 0;
 
     s_ui_ready = 1;
@@ -470,16 +423,6 @@ u8 LCD_UI_Update(void)
 {
     u8 dirty = 0;
     u8 sig   = ui_sig_state();
-
-    /*---------- 动图：每 8 轮（约 80ms）推进一帧 ----------*/
-    s_tick_anim++;
-    if (s_tick_anim >= 8)
-    {
-        s_tick_anim = 0;
-        s_vu_frame  = (u8)((s_vu_frame + 1) & 0x0F);
-        ui_draw_vu(s_vu_frame);
-        dirty = 1;
-    }
 
     /*---------- 日志：脏了立刻刷，不受 500ms 节流限制 ----------
       ★ 只有 2 行缓冲，如果等 500ms 才刷，开机那十几条日志
@@ -600,11 +543,8 @@ void LCD_UI_Refresh_All(void)
 
     for (i = 0; i < UI_APP_MAX; i++)
         s_c_list[i][0] = 0;
-    for (i = 0; i < UI_VU_COUNT; i++)
-        s_vu_prev[i] = 0;
 
-    s_tick_anim = 7;      /* 下一轮立刻推进动图 */
-    s_tick_ui   = 49;     /* 下一轮立刻刷新状态 */
+    s_tick_ui = 49;     /* 下一轮立刻刷新状态 */
 }
 
 /*=====================================================================

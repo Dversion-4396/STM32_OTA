@@ -43,6 +43,70 @@ void LCD_Fill(u16 xsta, u16 ysta, u16 xend, u16 yend, u16 color)
 }
 
 /**
+ *  @brief 在指定位置显示一张 16 色调色板 + 4bpp 索引的图片
+ *
+ *  @param xsta 起始 x
+ *  @param ysta 起始 y
+ *  @param w    图片宽（必须是偶数）
+ *  @param h    图片高
+ *  @param pal  调色板，16 个 RGB565 值
+ *  @param idx  像素索引，4bpp，行主序，每字节两个像素（高半字节在前）
+ *
+ *  ★ 为什么是 4bpp 而不是 RGB565：
+ *    本工程用 MDK-ARM Lite，链接器卡 32KB 镜像上限。
+ *    去掉图片后固件已 20820 字节，只剩 11948 字节可用，
+ *    240x112 的 RGB565 要 53760 字节，装不下。
+ *    4bpp 每像素半字节，240x92 只要 11040 字节 + 32 字节调色板。
+ *
+ *  ★ 性能优化：整幅图只调一次 LCD_Address_Set（设成 w x h 的窗口），
+ *    之后连续 LCD_WR_DATA 让 ST7789V 自己递增地址。
+ *    逐像素调 Address_Set 每像素要多发 4 次寄存器+数据，慢一倍以上。
+ *
+ *  ★ 越界处理：图片整个超出屏幕就直接不画；部分超出就裁到屏幕内。
+ */
+void LCD_ShowImage16(u16 xsta, u16 ysta, u16 w, u16 h,
+                     const u16 *pal, const u8 *idx)
+{
+    u16 i = 0;
+    u16 j = 0;
+    u16 xend;
+    u16 yend;
+
+    if (pal == NULL || idx == NULL) return;
+    if (xsta >= LCD_W || ysta >= LCD_H) return;
+
+    /* 裁剪到屏幕内 */
+    xend = (u16)(xsta + w - 1);
+    yend = (u16)(ysta + h - 1);
+    if (xend >= LCD_W) xend = LCD_W - 1;
+    if (yend >= LCD_H) yend = LCD_H - 1;
+
+    LCD_Address_Set(xsta, ysta, xend, yend);
+
+    for (i = 0; i < h; i++)
+    {
+        u16 y = (u16)(ysta + i);
+        if (y > yend) break;
+
+        for (j = 0; j < w; j++)
+        {
+            u16 x = (u16)(xsta + j);
+            u32 n;
+            u8  v;
+
+            if (x > xend) break;
+
+            n = (u32)i * w + j;
+            v = idx[n >> 1];
+            /* 偶数像素取高半字节，奇数像素取低半字节 */
+            v = (u8)((n & 1) ? (v & 0x0F) : (v >> 4));
+
+            LCD_WR_DATA(pal[v]);
+        }
+    }
+}
+
+/**
  *  @brief 画一个点
  */
 void LCD_DrawPoint(u16 x, u16 y, u16 color)

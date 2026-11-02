@@ -291,9 +291,27 @@ void LCD_Init(void)
     /* 20. 正常显示模式 */
     LCD_WR_REG(0x13);                       /* NORON */
 
-    /* 21. 开显示 */
-    LCD_WR_REG(0x29);                       /* DISPON */
+    /* 21. 开显示
+           ★ 2026-11-02 改：先别开显示，等 LCD_UI_Init() 清完屏再开。
+             原因：DISPON 之后屏幕立刻开始扫描 GRAM，而刚上电 GRAM 里是随机数据，
+             会看到左上角闪一片花屏（用户反馈"启动的时候左上方好像有东西"）。
+             DISPOFF 状态下写 GRAM 是不受影响的，写完了再开显示就一次到位。 */
+    LCD_WR_REG(0x28);                       /* DISPOFF，先关着 */
     delay_ms(20);
 
     Usart1_SendString("[LCD] ST7789V init done, 240x320\r\n");
+}
+
+/**
+ *  @brief 打开显示（GRAM 清干净之后调）
+ *
+ *  ★ 为什么不在 LCD_Init() 里直接开：
+ *    上电时 GRAM 是随机数据，DISPON 会立刻把随机内容扫上屏，
+ *    在 LCD_UI_Init() 清屏之前会有几百毫秒的花屏。
+ *    DISPOFF → 清屏/画完 → DISPON，用户就看不到那一段。
+ */
+void LCD_Display_On(void)
+{
+    LCD_WR_REG(0x29);                       /* DISPON */
+    delay_ms(20);
 }
