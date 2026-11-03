@@ -353,6 +353,112 @@ int main(void)
     }
 
     /*=================================================================
+     * ★★ 7.2 把自己的版本信息写进 EEPROM 的 App 信息区 ★★
+     *
+     * 【为什么必须有这一段】
+     *   BootLoader 的菜单 [3]（查看当前 APP）和 [4]（OTA 升级搬运）
+     *   都要知道"当前 APP 是什么版本、多大"。
+     *   但 BootLoader 自己不知道 —— 它是独立编译的，
+     *   拿不到 APP 的编译信息。所以只能由 APP 启动时主动写进去。
+     *
+     * 【写什么】
+     *   版本名  ：跟 BemfaInfoCB.Version_ABuff 保持同一个字符串，
+     *             这样云端看到的版本和本地记录的一致，不会自相矛盾。
+     *   版本号  ：由版本名换算（1.0.0 → 10000），供 BootLoader 比大小。
+     *   大小    ：APP 镜像的真实字节数，见下面 APP_IMAGE_SIZE 的说明。
+     *   App 名  ：默认 "STM32 OTA"，这里沿用 EEPROM 里的旧值。
+     *   序列号  ：沿用 EEPROM 里的旧值（目前没用到，预留）。
+     *
+     * 【什么时候写】
+     *   每次上电都写。为什么不做"只在版本变了才写"：
+     *     AT24C02 擦写寿命 100 万次，每次上电写 7 次左右，
+     *     一天上电 10 次的话能用 270 年，完全不用担心磨损。
+     *     而"只在变了才写"需要一个额外的比较基准，多一处可能出错的地方。
+     *
+     * 【为什么先 Load 再改再 Save】
+     *   直接构造一个全新结构体会把 app/sn 冲成空串。
+     *   先读出来（读失败会自动填默认值），只改要改的字段，再写回去。
+     *================================================================*/
+    {
+        u8 vi;
+
+        /* ① 先读现有信息（读失败也会填默认值，不会留下空结构体） */
+        (void)EEPROM_LoadAppInfo(&EEPROM_Data);
+
+        /* ② 版本名：直接抄 BemfaInfoCB 里的那份，保证两边一致 */
+        memset(EEPROM_Data.ver, 0, sizeof(EEPROM_Data.ver));
+        for (vi = 0; vi < (EEPROM_VER_SIZE - 1) && BemfaInfoCB.Version_ABuff[vi] != 0; vi++)
+        {
+            EEPROM_Data.ver[vi] = (char)BemfaInfoCB.Version_ABuff[vi];
+        }
+        EEPROM_Data.ver[vi] = '\0';
+
+        /* ③ 版本号：由版本名换算成数值（1.0.0 → 10000） */
+        EEPROM_Data.ver_num = cat1_version_to_num(EEPROM_Data.ver);
+        if (EEPROM_Data.ver_num == 0)
+        {
+            /* 版本名不是"数字.数字.数字"格式，退化成 10000 并提示 */
+            Usart1_SendString("[EEPROM] ★版本名格式不是 X.Y.Z，版本号按 10000 记\r\n");
+            EEPROM_Data.ver_num = 10000;
+        }
+
+        /* ④ 大小：APP 镜像的真实字节数
+         *
+         * ★ 这个值怎么来的（2026-11-03 改）★
+         *   原来是在这里手填一个数字（20896），每次改代码都要
+         *   翻 map 文件里的 Total ROM Size 再改一遍 —— 一忘就永远显示旧值。
+         *
+         *   现在改成让链接器自己算：
+         *     ARMCC 链接时会生成一批 Image$$ 开头的符号，
+         *     其中 Image$$ER_IROM1$$Limit 是"执行区 ER_IROM1 的结束地址"。
+         *     拿它减去 APP 的起始地址，就是镜像占了多少字节。
+         *
+         *   这个数和 map 文件里的 Total ROM Size 是同一个，
+         *   区别只在于：链接器自己算的，永远不会忘、也不会填错。
+         *
+         * ★ 为什么声明成 extern unsigned int ★
+         *   Image$$ 符号本身没有类型，它只是个地址标记。
+         *   取它的地址（&符号）就得到那个地址值。
+         *   声明成 unsigned int 只是为了让 & 运算合法，
+         *   类型不参与计算（我们只要地址）。
+         *
+         * ★ 注意 ★
+         *   ER_IROM1 的 Limit 是"最后一段数据的末尾"，
+         *   而 Total ROM Size 还额外算了 RW 段在 Flash 里的初值副本。
+         *   两者可能差几十字节，用来显示"多大"足够了。 */
+        {
+            extern unsigned int Image$$ER_IROM1$$Limit;
+            EEPROM_Data.app_size = (u32)(&Image$$ER_IROM1$$Limit) - (u32)FLASH_A_ADDR;
+        }
+
+        /* ⑤ 写回 EEPROM */
+        if (EEPROM_SaveAppInfo(&EEPROM_Data) != 0)
+        {
+            Usart1_SendString("[EEPROM] ★App 信息写入失败\r\n");
+            LCD_Log("AppInfo wr FAIL");
+        }
+        else
+        {
+            Usart1_SendString("[EEPROM] App 信息已写入：版本名=");
+            Usart1_SendString(EEPROM_Data.ver);
+            Usart1_SendString(" 版本号=");
+            {
+                char numbuf[16];
+                sprintf(numbuf, "%lu", (unsigned long)EEPROM_Data.ver_num);
+                Usart1_SendString(numbuf);
+            }
+            Usart1_SendString(" 大小=");
+            {
+                char numbuf[16];
+                sprintf(numbuf, "%lu", (unsigned long)EEPROM_Data.app_size);
+                Usart1_SendString(numbuf);
+            }
+            Usart1_SendString(" 字节\r\n");
+            LCD_Log("AppInfo saved");
+        }
+    }
+
+    /*=================================================================
      * 把 EEPROM 里的版本号同步给屏幕
      *
      * ★ 为什么单独拷一份，而不是让 lcd_ui.c 直接读 BemfaInfoCB：

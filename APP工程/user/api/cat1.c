@@ -610,19 +610,125 @@ u8 CAT1_OTA(char *url, u32 fw_len)
     return 0;
 }
 
-//处理云端下发的 OTA 事件，解析 JSON 包
+/*=====================================================================
+ * 函数：cat1_version_to_num
+ * 负责：把 "1.0.1" 这种版本名字符串换算成数值
+ *
+ * 参数：ver_str - 版本名字符串，必须是"数字.数字.数字"三段
+ * 返回：大版本*10000 + 小版本*100 + 修订号；返回 0 表示格式非法
+ *
+ * 例：1.0.0 → 10000    1.0.1 → 10001    1.2.0 → 10200
+ *
+ * ★ 为什么要把版本号变成数字 ★
+ *   字符串比大小是字典序，会出错：
+ *     "1.10.0" < "1.9.0"  （因为 '1' < '9'）
+ *   但 1.10.0 明显比 1.9.0 新。变成数字 11000 vs 10900 就对了。
+ *
+ * ★ 为什么不用 sscanf ★
+ *   armcc 的 sscanf 会拖进来一大坨库代码（约 2~3KB），
+ *   而这个 MCU 的 APP 区虽然有 480KB，但启动区 BootLoader 只有 32KB，
+ *   库代码能省则省。手写解析只要几十字节。
+ *=====================================================================*/
+u32 cat1_version_to_num(const char *ver_str)
+{
+    u32 parts[3];       /* 大版本 / 小版本 / 修订号 */
+    u32 cur = 0;
+    u8  idx = 0;
+    u8  has_digit = 0;
+    const char *p = ver_str;
+
+    if (ver_str == NULL)
+    {
+        return 0;
+    }
+
+    parts[0] = 0;
+    parts[1] = 0;
+    parts[2] = 0;
+
+    while (*p != '\0')
+    {
+        if (*p >= '0' && *p <= '9')
+        {
+            cur = cur * 10 + (u32)(*p - '0');
+            has_digit = 1;
+
+            /* 防溢出：版本号每段不该超过 9999 */
+            if (cur > 9999)
+            {
+                return 0;
+            }
+        }
+        else if (*p == '.')
+        {
+            if (has_digit == 0 || idx >= 2)
+            {
+                return 0;       /* ".." 或 ".1.2.3" 这种非法 */
+            }
+            parts[idx] = cur;
+            idx++;
+            cur = 0;
+            has_digit = 0;
+        }
+        else
+        {
+            return 0;           /* 出现非数字非点的字符 ⇒ 非法 */
+        }
+        p++;
+    }
+
+    /* 最后一段也要有数字 */
+    if (has_digit == 0 || idx != 2)
+    {
+        return 0;               /* 必须正好三段 */
+    }
+    parts[2] = cur;
+
+    /* 编码：大版本*10000 + 小版本*100 + 修订号 */
+    return parts[0] * 10000UL + parts[1] * 100UL + parts[2];
+}
+
+/*=====================================================================
+ * 函数：CAT1_ParseOTA
+ * 负责：解析云端下发的 OTA 通知
+ *
+ * 参数：json - 通知文本
+ * 返回：0 = 解析成功  1 = 格式错  2 = URL 非法  3 = 大小非法  4 = 版本号非法
+ *
+ * ★ 报文格式（2026-11-03 改）★
+ *
+ *   旧格式：http://xxx/fw.bin,31236
+ *   旧格式：http://xxx/fw.bin,31236,md5
+ *   新格式：http://xxx/fw.bin,31236,1.0.1
+ *   新格式：http://xxx/fw.bin,31236,1.0.1,md5
+ *
+ *   第 3 个字段从"MD5"改成了"版本号"。
+ *   为什么必须加版本号：
+ *     原来 BootLoader 只能比"当前版本号 vs 新版本号"，
+ *     但新版本号根本没地方来 —— 通知里只有 URL 和大小。
+ *     没有版本号就只能"有固件就刷"，同一个固件会被反复刷写，
+ *     而且降级也拦不住。加上版本号之后才能真的做"只有更新才升级"。
+ *
+ *   ★ 怎么区分"第 3 个字段是 MD5 还是版本号" ★
+ *     版本号一定是"数字.数字.数字"这种带点的形式（1.0.1）；
+ *     MD5 是 32 位纯十六进制、不带点。
+ *     所以判据就是"含不含 '.'"，含点当版本号，不含点当 MD5（兼容老格式）。
+ *=====================================================================*/
 u8 CAT1_ParseOTA(char *json)
 {
-    //存放原始 URL、大小、MD5
+    //存放原始 URL、大小
     char *onedouhao;
 
-    //存放切割后的 URL、大小、MD5
+    //存放切割后的 URL、大小
     char *url;
 
     //每次找到 ',' 后，size_str 指向下一个字符
     char *size_str;
 
-    //MD5 长度
+    //第 3 个字段（版本号 或 老格式的 MD5）
+    char *third_str;
+
+    //第 4 个字段（MD5）
     char *md5_str;
 
     //真实的 URL 长度
@@ -633,7 +739,7 @@ u8 CAT1_ParseOTA(char *json)
         return 1;
     }
 
-    /* 报文格式：http://xxx/fw.bin,31236,md5(可选) */
+    /* 报文格式：http://xxx/fw.bin,31236,版本号[,md5] */
 
     /* ① 切出 URL */
     onedouhao = strchr(json, ',');
@@ -645,14 +751,21 @@ u8 CAT1_ParseOTA(char *json)
     url      = json;
     size_str = onedouhao + 1;
 
-    /* ② 切出大小，MD5 字段可有可无 */
-    md5_str = strchr(size_str, ',');
-    if (md5_str != NULL)
+    /* ② 切出大小，后面两个字段可有可无 */
+    third_str = strchr(size_str, ',');
+    if (third_str != NULL)
     {
-        *md5_str = '\0';
-        md5_str++;          /* MD5 目前不参与校验，保留给后面用 */
+        *third_str = '\0';
+        third_str++;
+
+        md5_str = strchr(third_str, ',');
+        if (md5_str != NULL)
+        {
+            *md5_str = '\0';
+            md5_str++;      /* MD5 目前不参与校验，保留给后面用 */
+        }
+        (void)md5_str;
     }
-    (void)md5_str;
 
     /* ③ ★URL 长度检查 + 拷进 URL_ABuff★
      *   原来这一步完全没做，URL_ABuff 永远是全 0 缓冲区，
@@ -676,6 +789,71 @@ u8 CAT1_ParseOTA(char *json)
     {
         Usart1_SendString("[OTA] 固件超过 480KB，拒绝\r\n");
         return 3;
+    }
+
+    /* ⑤ ★解析版本号，写进 EEPROM 的 App 信息区★
+     *
+     *   EEPROM_Data 是 App 信息区（0x70 之后），
+     *   和 BemfaInfoCB（0x00~0x62）是两块独立区域，互不影响。
+     *
+     *   写进去之后，BootLoader 菜单 [3] 能看到"待升级版本号"，
+     *   菜单 [4] 会拿它和当前版本号比大小，只有更新才搬。 */
+    if (third_str != NULL && third_str[0] != '\0')
+    {
+        if (strchr(third_str, '.') != NULL)
+        {
+            /* 含点 ⇒ 是版本号，形如 "1.0.1" */
+            u32 new_num;
+
+            /* 先把字符串存下来（版本名，最多 7 字符 + '\0'） */
+            memset(EEPROM_Data.new_ver, 0, sizeof(EEPROM_Data.new_ver));
+            strncpy(EEPROM_Data.new_ver, third_str, EEPROM_VER_SIZE - 1);
+
+            /* 再算数值版本号：大版本*10000 + 小版本*100 + 修订号 */
+            new_num = cat1_version_to_num(third_str);
+            if (new_num == 0)
+            {
+                Usart1_SendString("[OTA] 版本号格式非法\r\n");
+                return 4;
+            }
+            EEPROM_Data.new_ver_num = new_num;
+
+            Usart1_SendString("[OTA] 新版本名=");
+            Usart1_SendString(EEPROM_Data.new_ver);
+            Usart1_SendString(" 新版本号=");
+            {
+                char numbuf[16];
+                sprintf(numbuf, "%lu", (unsigned long)new_num);
+                Usart1_SendString(numbuf);
+            }
+            Usart1_SendString("\r\n");
+        }
+        else
+        {
+            /* 不含点 ⇒ 是老格式的 MD5，当作"没给版本号"处理。
+             * 这时候 new_ver_num 保持 0，BootLoader 菜单 [4] 会拒绝升级
+             * （因为它判 new_ver_num <= ver_num）。这是故意的：
+             * 没有版本号就不该盲目刷，避免重复刷同一个固件。 */
+            Usart1_SendString("[OTA] 通知里没带版本号，只下载不升级\r\n");
+            EEPROM_Data.new_ver_num = 0;
+            EEPROM_Data.new_ver[0]  = '\0';
+        }
+    }
+    else
+    {
+        /* 完全没给第 3 个字段 ⇒ 同老格式，只下载不升级 */
+        Usart1_SendString("[OTA] 通知里没带版本号，只下载不升级\r\n");
+        EEPROM_Data.new_ver_num = 0;
+        EEPROM_Data.new_ver[0]  = '\0';
+    }
+
+    /* 待升级固件长度记进 App 信息区，
+     * BootLoader 菜单 [4] 就靠这个值判断"W25Q128 里有没有固件" */
+    EEPROM_Data.new_len = BemfaInfoCB.OTA_firelen;
+
+    if (EEPROM_SaveAppInfo(&EEPROM_Data) != 0)
+    {
+        Usart1_SendString("[OTA] ★版本信息写 EEPROM 失败\r\n");
     }
 
     Usart1_SendString("[OTA] URL=");

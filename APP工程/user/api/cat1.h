@@ -18,6 +18,7 @@
 #include "delay.h"
 #include "spi.h"
 #include "common.h"
+#include "eeprom.h"   /* ★2026-11-03 加：CAT1_ParseOTA 要写 App 信息区 */
 /* USART3_BRR 已在 common.h 定义，这里不再重复 */
 /*==================== 串口定义 ====================*/
 #define CAT1_UART           USART3
@@ -119,5 +120,9 @@ u8 CAT1_OTA(char *url, u32 fw_len);
  * 负责：C
  *-------------------------------------------------------------------*/
 u8 CAT1_ParseOTA(char *json);
+
+/* 把 "1.0.1" 这种版本名字符串换算成数值：大版本*10000 + 小版本*100 + 修订号
+ * 返回 0 表示格式非法（版本号里必须正好有 3 段数字） */
+u32 cat1_version_to_num(const char *ver_str);
 u8 CAT1_SendMQTTPacket(u8 *buf, u16 len);
 #endif /* __CAT1_H */

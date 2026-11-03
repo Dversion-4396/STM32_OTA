@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#define USART1_BRR 9600
+#define USART1_BRR 115200
 #define USART2_BRR 115200
 #define USART3_BRR 115200
 #define RCC_APB2_AFIO_CLOCK_ENABLE (0x01)

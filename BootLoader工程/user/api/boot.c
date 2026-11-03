@@ -21,6 +21,9 @@
 // bootloader 事件标志位
 u32 BootEventFlag = 0;
 
+// OTA 擦除标志位
+static u8 BootClear_Flag = 0;
+
 /*=====================================================================
  * 函数：BootLoader_Branch
  * 负责：B
@@ -41,6 +44,8 @@ u32 BootEventFlag = 0;
 void BootLoader_Branch(void)
 {
     u16 i;
+
+    // (2) 判断是否主动进入 Bootloder
     Usart1_SendString("是否进入 进入 BootLoader 'Y' \r\n");
     for (i = 0; i < 50; i++)
     {
@@ -57,17 +62,19 @@ void BootLoader_Branch(void)
 
     }
 
-    //如果 OTA_flag == BOOT_STA_O，说明有待升级固件，进入 OTA 模式
+    // (3) 如果未主动进入则判断是否有 OTA 事件
     if (BemfaInfoCB.OTA_flag == BOOT_STA_O)
     {
-        Usart1_SendString("BootLoader 已进入 OTA 模式\r\n");
+        Usart1_SendString("\r\n");
         BootEventFlag |= OTA_MODEM;
+        Usart1_SendString("有 Bootloder 升级事件 \r\n");
+
         return;
     }
     Usart1_SendString("BootLoader 已退出跳转到APP\r\n");
     delay_ms(100);
 
-    //如果没有进入 BootLoader，也没有待升级固件，直接跳转到 APP
+    // (4) 如果没有进入 BootLoader，也没有待升级固件，直接跳转到 APP
     Load_APP(FLASH_A_ADDR);
 }
 
@@ -88,7 +95,8 @@ void BootLoader_Info(void)
     Usart1_SendString("========================================\r\n");
     Usart1_SendString("[1] A区擦除\r\n");
     Usart1_SendString("[2] 跳转到 APP\r\n");
-    Usart1_SendString("[3] 查看当前状态\r\n");
+    Usart1_SendString("[3] 查看当前 APP（版本名/版本号/大小）\r\n");
+    Usart1_SendString("[4] OTA 升级搬运（从 W25Q128 搬到 A 区）\r\n");
     Usart1_SendString("========================================\r\n");
     Usart1_SendString("请输入选项：");
 }
@@ -121,95 +129,329 @@ void BootLoader_Event(u8 *data, u16 len)
      *   放这里最省事，也不用给每个 case 套花括号 */
     char buf[80];
 
+    /* ★ 空指针/空长度保护（2026-11-03 补回）★
+     *   下面第一句就是 data[0]，如果 data 是 NULL 会直接硬件异常；
+     *   如果 len 是 0 说明中断里没收到任何字节，也不该当命令处理。 */
     if (data == NULL || len == 0)
     {
         return;
     }
 
-    /* 只读 data[0]，不用看任何 flag：
-     *   usart1_value.flag 在 main.c 主循环里已经判断过了
-     *   进到本函数就说明"确实收到数据了" */
+    // (9) 提取第一个字节作为命令，之所以不作标志位判断是因为在外部判断过了
     switch (data[0])
     {
-    /*---------- [1] 擦除 APP 区 ----------
-     * 危险操作：擦完 APP 就没了，只能重新烧录或走 OTA
-     *------------------------------------------------*/
     case '1':
+        // (9.1) 擦除 APP 区域
         Usart1_SendString("\r\n[擦除] 开始擦除 APP 区（约 3 秒）...\r\n");
 
         if (Flash_EraseApp() == 0)
         {
-            Usart1_SendString("[擦除] ★擦除成功，APP 区已清空\r\n");
+            Usart1_SendString("[擦除] 擦除成功，APP 区已清空\r\n");
             Usart1_SendString("[擦除] 注意：此时 APP 已无法运行，请重新下载\r\n");
+            BootClear_Flag = 1;
         }
         else
         {
-            Usart1_SendString("[擦除] ★擦除失败\r\n");
+            Usart1_SendString("[擦除] 擦除失败\r\n");
+            Usart1_SendString("[擦除] 注意可能未完全擦除但已擦除部分内容\r\n");
+
         }
 
         BootLoader_Info();
         break;
 
-    /*---------- [2] 跳转到 APP ----------
-     * 调试时最有用：改完 APP 只烧 APP 区，不用重烧 BootLoader
-     *------------------------------------------------*/
     case '2':
-        Usart1_SendString("\r\n[跳转] 正在跳转到 APP...\r\n");
+        // (9.2) 跳转到 APP
+
+        if (BootClear_Flag == 1)
+        {
+
+            // (9.2.1) 如果 APP 区已被擦除，提示无法跳转
+            Usart1_SendString("\r\n[跳转] 警告: APP 区已被擦除，无法跳转\r\n");
+            BootLoader_Info();
+            break;
+        }
+
+        Usart1_SendString("\r\n[跳转] 正在跳转到 APP...\r\n"); 
         delay_ms(100);
+        // (10) Bootloder 工作完成，重大分支
         Load_APP(FLASH_A_ADDR);
 
-        /* 能执行到这里说明 Load_APP 内部检查失败后 return 了
-         * （APP 区为空 / 栈顶非法 / 复位向量非法） */
+        // (10.1) 执行到这里说明跳转失败，可能 APP 区为空或损坏
         Usart1_SendString("[跳转] ★跳转失败(APP 区可能为空)\r\n");
         BootLoader_Info();
         break;
 
-    /*---------- [3] 查看当前状态 ----------
-     * 调试用：一眼看出 EEPROM、W25Q128、OTA 标志是否正常
-     *------------------------------------------------*/
     case '3':
-        Usart1_SendString("\r\n--- 当前状态 ---\r\n");
-
-        sprintf(buf, "valid_flag  = 0x%02X  %s\r\n",
-                BemfaInfoCB.valid_flag,
-                (BemfaInfoCB.valid_flag == VALID_BEMFA_DATA) ? "(有效)" : "(未配置)");
-        Usart1_SendString(buf);
-
-        sprintf(buf, "OTA_flag    = 0x%08lX  %s\r\n",
-                (unsigned long)BemfaInfoCB.OTA_flag,
-                (BemfaInfoCB.OTA_flag == BOOT_STA_O) ? "(有待升级固件)" : "(无)");
-        Usart1_SendString(buf);
-
-        sprintf(buf, "OTA_firelen = %lu\r\n", (unsigned long)BemfaInfoCB.OTA_firelen);
-        Usart1_SendString(buf);
-
-        /* 版本号可能为空（全 0 或全 FF），先判断再打印，避免输出乱码 */
-        if (BemfaInfoCB.Version_ABuff[0] != 0 && BemfaInfoCB.Version_ABuff[0] != 0xFF)
+        // (9.3) 查看当前 APP 信息
+        //
+        // ★ 数据从哪来 ★
+        //   APP 每次启动时会把"自己是谁、什么版本、多大"写进 EEPROM，
+        //   这里读的就是那份数据。如果 APP 从来没跑过（新板子/刚擦过），
+        //   EEPROM_LoadAppInfo 会返回 1 并填上出厂默认值，
+        //   所以下面既打印内容，也把"是不是真的存过"单独标出来。
         {
-            Usart1_SendString("Version     = ");
-            Usart1_SendBuffer((char *)BemfaInfoCB.Version_ABuff,
-                              strlen((char *)BemfaInfoCB.Version_ABuff));
-            Usart1_SendString("\r\n");
-        }
-        else
-        {
-            Usart1_SendString("Version     = (未设置)\r\n");
-        }
+            u8 ret = EEPROM_LoadAppInfo(&EEPROM_Data);
 
-        /* W25Q128 的 JEDEC ID，正常应该是 0xEF4018（Winbond 16MB） */
-        sprintf(buf, "W25Q128 ID  = 0x%08lX\r\n", (unsigned long)W25Q128_ReadID());
-        Usart1_SendString(buf);
+            Usart1_SendString("\r\n--- 当前 APP 信息 ---\r\n");
 
-        Usart1_SendString("----------------\r\n");
-        BootLoader_Info();
+            sprintf(buf, "  版本名    : %s\r\n", EEPROM_Data.ver);
+            Usart1_SendString(buf);
+
+            sprintf(buf, "  版本号    : %lu\r\n", (unsigned long)EEPROM_Data.ver_num);
+            Usart1_SendString(buf);
+
+            sprintf(buf, "  APP 名    : %s\r\n", EEPROM_Data.app);
+            Usart1_SendString(buf);
+
+            sprintf(buf, "  序列号    : %s\r\n", EEPROM_Data.sn);
+            Usart1_SendString(buf);
+
+            sprintf(buf, "  APP 大小  : %lu 字节 (%lu KB)\r\n",
+                    (unsigned long)EEPROM_Data.app_size,
+                    (unsigned long)(EEPROM_Data.app_size / 1024));
+            Usart1_SendString(buf);
+
+            /* ---- 待升级信息（有没有云端推过来的新固件） ---- */
+            Usart1_SendString("--- 待升级信息 ---\r\n");
+            if (EEPROM_Data.new_len == 0)
+            {
+                Usart1_SendString("  没有待升级固件\r\n");
+            }
+            else
+            {
+                sprintf(buf, "  新版本名  : %s\r\n",
+                        (EEPROM_Data.new_ver[0] != 0) ? EEPROM_Data.new_ver : "(未知)");
+                Usart1_SendString(buf);
+
+                sprintf(buf, "  新版本号  : %lu\r\n", (unsigned long)EEPROM_Data.new_ver_num);
+                Usart1_SendString(buf);
+
+                sprintf(buf, "  新固件长度: %lu 字节 (%lu KB)\r\n",
+                        (unsigned long)EEPROM_Data.new_len,
+                        (unsigned long)(EEPROM_Data.new_len / 1024));
+                Usart1_SendString(buf);
+
+                /* 版本号比较：编码规则是 大版本*10000 + 小版本*100 + 修订号 */
+                if (EEPROM_Data.new_ver_num > EEPROM_Data.ver_num)
+                {
+                    Usart1_SendString("  → 版本号比当前新，可以升级\r\n");
+                }
+                else
+                {
+                    Usart1_SendString("  → 版本号不比当前新，输入 [4] 也会拒绝\r\n");
+                }
+            }
+
+            /* ---- OTA 标志 + 数据来源 ---- */
+            Usart1_SendString("--- 状态 ---\r\n");
+            sprintf(buf, "  OTA_flag  : 0x%08lX (%s)\r\n",
+                    (unsigned long)BemfaInfoCB.OTA_flag,
+                    (BemfaInfoCB.OTA_flag == BOOT_STA_O) ? "有待升级事件" : "无");
+            Usart1_SendString(buf);
+
+            sprintf(buf, "  W25Q128 ID: 0x%06lX\r\n", (unsigned long)W25Q128_ReadID());
+            Usart1_SendString(buf);
+
+            if (ret == 0)
+            {
+                Usart1_SendString("  数据来源  : EEPROM 已存过（APP 写过）\r\n");
+            }
+            else
+            {
+                Usart1_SendString("  数据来源  : EEPROM 没存过，上面是出厂默认值\r\n");
+            }
+
+            Usart1_SendString("----------------\r\n");
+            BootLoader_Info();
+        }
         break;
 
-    /*---------- 其他输入：提示并重显菜单 ----------*/
+    case '4':
+        // (9.4) OTA 升级搬运：把 W25Q128 里的新固件搬进片内 APP 区
+        //
+        // ★ 为什么单独给一个 [4]，而不是像以前那样一上电自动搬 ★
+        //   自动搬的问题：一旦 W25Q128 里是半截固件，开机就自动擦掉好 APP，
+        //   然后搬一半失败 ⇒ 变砖，连菜单都进不来。
+        //   改成手动触发后，用户可以先 [3] 看清楚版本号和大小，
+        //   确认没问题再按 [4]，出问题还能 [2] 跳回旧 APP。
+        //
+        // ★ 2026-11-03 改：真正的搬运逻辑挪进 Boot_DoUpgrade()，
+        //   这里只负责"做判断 + 报结果"，和 ActiveEvent() 共用一份实现。
+        {
+            u8 ret;
+            u8 has_image;
+
+            Usart1_SendString("\r\n[升级] 开始 OTA 升级检查...\r\n");
+
+            /* ---- 第 1 步：先看 EEPROM 里有没有待升级记录 ---- */
+            (void)EEPROM_LoadAppInfo(&EEPROM_Data);
+
+            /* ---- 第 2 步：W25Q128 里到底有没有固件 ----
+             *   判据是 EEPROM 记录的 new_len，不是 OTA_flag。
+             *   为什么：OTA_flag 只表示"云端通知过来了"，
+             *   而 new_len 表示"APP 真的把固件下载进 W25Q128 了"。
+             *   只有 flag 没有 len ⇒ 下载还没完成，搬了就是搬空气。 */
+            has_image = (EEPROM_Data.new_len > 0) ? 1 : 0;
+
+            if (has_image == 0)
+            {
+                Usart1_SendString("[升级] ★EEPROM 里没有待升级固件记录\r\n");
+                Usart1_SendString("[升级] 说明 APP 还没下载完成，或下载失败了\r\n");
+                BootLoader_Info();
+                break;
+            }
+
+            sprintf(buf, "[升级] 待升级固件长度 = %lu 字节\r\n",
+                    (unsigned long)EEPROM_Data.new_len);
+            Usart1_SendString(buf);
+
+            /* ---- 第 3 步：版本对比 ----
+             *   编码规则 大版本*10000 + 小版本*100 + 修订号，
+             *   所以直接比 u32 大小就等价于比版本先后。
+             *   用字符串比会错："1.10.0" < "1.9.0"（字典序）。 */
+            sprintf(buf, "[升级] 当前版本号 = %lu，新版本号 = %lu\r\n",
+                    (unsigned long)EEPROM_Data.ver_num,
+                    (unsigned long)EEPROM_Data.new_ver_num);
+            Usart1_SendString(buf);
+
+            if (EEPROM_Data.new_ver_num <= EEPROM_Data.ver_num)
+            {
+                Usart1_SendString("[升级] ★新版本号不比当前新，拒绝升级\r\n");
+                Usart1_SendString("[升级] （同一版本重复刷写请用串口烧录工具）\r\n");
+                BootLoader_Info();
+                break;
+            }
+
+            Usart1_SendString("[升级] 版本号检查通过\r\n");
+
+            /* ---- 第 4 步：校验 + 擦除 + 搬运 + 写回版本信息 ----
+             *   Boot_DoUpgrade 内部先 Boot_VerifyFirmware 再 Flash_EraseApp，
+             *   所以校验失败时 APP 区一个字节都没动。 */
+            ret = Boot_DoUpgrade(EEPROM_Data.new_len,
+                                 EEPROM_Data.new_ver_num,
+                                 EEPROM_Data.new_ver);
+
+            if (ret != 0)
+            {
+                if (ret == 1)
+                {
+                    Usart1_SendString("[升级] ★固件校验失败，APP 区未改动\r\n");
+                }
+                else if (ret == 2)
+                {
+                    Usart1_SendString("[升级] ★擦除失败\r\n");
+                }
+                else
+                {
+                    Usart1_SendString("\r\n[升级] ★搬运失败，APP 区已损坏\r\n");
+                    Usart1_SendString("[升级] 请用串口烧录工具重新烧写 APP\r\n");
+                }
+                BootLoader_Info();
+                break;
+            }
+
+            sprintf(buf, "[升级] ★升级完成，新版本 = %s\r\n", EEPROM_Data.ver);
+            Usart1_SendString(buf);
+            Usart1_SendString("[升级] 正在重启...\r\n");
+            delay_ms(500);
+            NVIC_SystemReset();
+        }
+        break;
+
     default:
+
+        // (9.5) 输入错误，提示并重显菜单
         Usart1_SendString("输入错误，请重新输入\r\n");
         BootLoader_Info();
         break;
     }
+}
+
+/*=====================================================================
+ * 函数：Boot_DoUpgrade
+ * 负责：B（把 W25Q128 里的新固件搬进片内 APP 区，并写回版本信息）
+ *
+ * 参数：new_len     - W25Q128 里固件的总长度（含 28 字节尾缀）
+ *       new_ver_num - 新版本号数值（大版本*10000+小版本*100+修订号）
+ *       new_ver     - 新版本名字符串，可为 NULL 或空串
+ * 返回：0 = 升级成功   1 = 校验失败   2 = 擦除失败   3 = 搬运失败
+ *
+ * ★★★ 为什么要把这段抽成函数（2026-11-03 真板踩出来的）★★★
+ *
+ *   原来升级有两条路，各写了一份几乎一样的代码：
+ *     路 A：菜单 [4] 手动触发 —— 写完版本信息、清标志，很完整
+ *     路 B：ActiveEvent() 上电自动触发 —— 只搬固件，【不写版本信息】
+ *
+ *   真板实测：APP 下载完固件 → 置 OTA_flag → 重启 →
+ *   BootLoader 走的是路 B（因为 OTA_flag 非 0，根本不会停在菜单），
+ *   于是固件搬好了、APP 也跑起来了，但 EEPROM 里的版本号还是旧的 1.0.0。
+ *   后果：云端每次对比都判"版本号不新"，反复下发同一个固件，永远升不上去。
+ *
+ *   抽成一个函数之后，两条路都调它，就不可能再出现"某条路漏了写回"。
+ *====================================================================*/
+u8 Boot_DoUpgrade(u32 new_len, u32 new_ver_num, const char *new_ver)
+{
+    u32 real_len = 0;
+
+    /* ---- 第 1 步：校验固件（大小 / 魔数 / 尾缀 / 向量表） ----
+     *   必须在 Flash_EraseApp 之前。校验失败时 APP 区一个字节都没动。 */
+    if (Boot_VerifyFirmware(new_len, &real_len) != 0)
+    {
+        return 1;
+    }
+
+    /* ---- 第 2 步：擦除 APP 区 ---- */
+    Usart1_SendString("[升级] 开始擦除 APP 区（约 3 秒）...\r\n");
+    if (Flash_EraseApp() != 0)
+    {
+        return 2;
+    }
+
+    /* ---- 第 3 步：搬运 ---- */
+    if (Boot_CopyFirmware(real_len) != 0)
+    {
+        return 3;
+    }
+
+    /* ---- 第 4 步：把新版本信息写回 EEPROM ----
+     *   ★ 这一步不能省 ★
+     *   不更新 ver / ver_num，下次开机还是旧版本号，
+     *   云端会一直判"版本号不新"重复下发同一个固件。
+     *
+     *   先 Load 再改：保住 app（App 名）和 sn（序列号）不被冲成空串。 */
+    (void)EEPROM_LoadAppInfo(&EEPROM_Data);
+
+    if (new_ver != 0 && new_ver[0] != '\0')
+    {
+        memset(EEPROM_Data.ver, 0, sizeof(EEPROM_Data.ver));
+        strncpy(EEPROM_Data.ver, new_ver, EEPROM_VER_SIZE - 1);
+        EEPROM_Data.ver[EEPROM_VER_SIZE - 1] = '\0';
+    }
+
+    EEPROM_Data.ver_num     = new_ver_num;
+    EEPROM_Data.app_size    = real_len;      /* 真实镜像长度（不含尾缀） */
+    EEPROM_Data.new_len     = 0;             /* 待升级记录清掉 */
+    EEPROM_Data.new_ver_num = 0;
+    EEPROM_Data.new_ver[0]  = '\0';
+
+    if (EEPROM_SaveAppInfo(&EEPROM_Data) != 0)
+    {
+        Usart1_SendString("[升级] ★版本信息写 EEPROM 失败（固件已搬好）\r\n");
+    }
+    else
+    {
+        Usart1_SendString("[升级] 版本信息已更新\r\n");
+    }
+
+    /* ---- 第 5 步：清掉"有 OTA 事件"的标志 ----
+     *   不清的话，下次开机 OTA_flag 还是 BOOT_STA_O，
+     *   又会跳过 5 秒窗口自动进升级流程。 */
+    BemfaInfoCB.OTA_flag    = 0;
+    BemfaInfoCB.OTA_firelen = 0;
+    (void)EEPROM_SaveInfo();
+
+    return 0;
 }
 
 /*=====================================================================
@@ -230,37 +472,92 @@ void BootLoader_Event(u8 *data, u16 len)
  *====================================================================*/
 void ActiveEvent(void)
 {
-
     u32 real_len;
+    u8  ret;
+
     if (!(BootEventFlag & OTA_MODEM))
     {
         return;
     }
     BootEventFlag &= ~OTA_MODEM;
-    if (Boot_VerifyFirmware(BemfaInfoCB.OTA_firelen, &real_len) != 0)
-    {
-        Usart1_SendString("[BOOT] 校验失败\r\n");
-        BemfaInfoCB.OTA_flag = 0;
-        EEPROM_SaveInfo();
-        Load_APP(FLASH_A_ADDR);
-        return;
-    }
-    Usart1_SendString("[BOOT] 擦除APP区域\r\n");
-    Flash_EraseApp();
-    if (Boot_CopyFirmware(real_len) != 0)
-    {
-        Usart1_SendString("[BOOT] 搬运失败\r\n");
-        BemfaInfoCB.OTA_flag = 0;
-        EEPROM_SaveInfo();
-        Load_APP(FLASH_A_ADDR);
-        return;
-    }
-    Usart1_SendString("[BOOT] 搬运成功\r\n");
-    BemfaInfoCB.OTA_flag = 0;
-    EEPROM_SaveInfo();
 
-    Usart1_SendString("[BOOT] 升级完成正在重置系统\r\n");
-    /// 重置系统
+    /*=================================================================
+     * ★ 2026-11-03 重写：这条路上电自动触发，原来只搬固件不写版本信息，
+     *   导致"固件升了、版本号还是旧的"，云端会反复下发同一个固件。
+     *   现在统一调 Boot_DoUpgrade()，和菜单 [4] 走同一套逻辑。
+     *
+     *   三个前置判断顺序不能变：
+     *     ① 有没有固件（new_len > 0）
+     *     ② 版本号是不是更新（new_ver_num > ver_num）
+     *     ③ 固件本身合不合法（Boot_DoUpgrade 里的 Boot_VerifyFirmware）
+     *   任意一条不过 ⇒ 清标志、跳回旧 APP，绝不动 APP 区。
+     *=================================================================*/
+    (void)EEPROM_LoadAppInfo(&EEPROM_Data);
+
+    /* ---- ① 有没有待升级固件 ----
+     *   判据用 new_len 不用 OTA_flag：flag 只表示云端通知来了，
+     *   len 才表示 APP 真的把固件下载进 W25Q128 了。 */
+    if (EEPROM_Data.new_len == 0)
+    {
+        Usart1_SendString("[BOOT] EEPROM 里没有待升级固件，跳过升级\r\n");
+        BemfaInfoCB.OTA_flag    = 0;
+        BemfaInfoCB.OTA_firelen = 0;
+        (void)EEPROM_SaveInfo();
+        Load_APP(FLASH_A_ADDR);
+        return;
+    }
+
+    /* ---- ② 版本对比 ----
+     *   BootLoader 里没有 Usart1_SendNumber（只有 SendString/SendBuffer/SendByte），
+     *   所以这里用 sprintf 拼一行打出来。 */
+    {
+        char numbuf[64];
+        sprintf(numbuf, "[BOOT] 当前版本号 = %lu，新版本号 = %lu\r\n",
+                (unsigned long)EEPROM_Data.ver_num,
+                (unsigned long)EEPROM_Data.new_ver_num);
+        Usart1_SendString(numbuf);
+    }
+
+    if (EEPROM_Data.new_ver_num <= EEPROM_Data.ver_num)
+    {
+        Usart1_SendString("[BOOT] ★新版本号不比当前新，拒绝升级\r\n");
+        BemfaInfoCB.OTA_flag    = 0;
+        BemfaInfoCB.OTA_firelen = 0;
+        (void)EEPROM_SaveInfo();
+        Load_APP(FLASH_A_ADDR);
+        return;
+    }
+
+    /* ---- ③ 校验 + 擦除 + 搬运 + 写回版本信息 ---- */
+    ret = Boot_DoUpgrade(EEPROM_Data.new_len,
+                         EEPROM_Data.new_ver_num,
+                         EEPROM_Data.new_ver);
+
+    if (ret != 0)
+    {
+        if (ret == 1)
+        {
+            Usart1_SendString("[BOOT] ★固件校验失败，APP 区未改动\r\n");
+        }
+        else if (ret == 2)
+        {
+            Usart1_SendString("[BOOT] ★擦除失败\r\n");
+        }
+        else
+        {
+            Usart1_SendString("[BOOT] ★搬运失败，APP 区已损坏\r\n");
+        }
+        BemfaInfoCB.OTA_flag    = 0;
+        BemfaInfoCB.OTA_firelen = 0;
+        (void)EEPROM_SaveInfo();
+        Load_APP(FLASH_A_ADDR);
+        return;
+    }
+
+    Usart1_SendString("[BOOT] 升级完成，新版本 = ");
+    Usart1_SendString(EEPROM_Data.ver);
+    Usart1_SendString("\r\n[BOOT] 正在重置系统\r\n");
+    delay_ms(500);
     NVIC_SystemReset();
 }
 
@@ -361,12 +658,18 @@ void Load_APP(u32 app_addr)
 u8 Boot_VerifyFirmware(u32 fw_total_len, u32 *out_real_len)
 {
     u8 buf[28];
+
+    //用于返回的长度
     u32 real_len;
+
+    // 判断固件长度是否合法
     if (fw_total_len < 28)
     {
         Usart1_SendString("BOOT VERIFY FIRMWARE: 无效固件长度\r\n");
         return 1;
     }
+
+    //判断是否有输出指针
     if (out_real_len == NULL)
     {
         Usart1_SendString("BOOT VERIFY FIRMWARE: 无效输出指针\r\n");
@@ -388,13 +691,17 @@ u8 Boot_VerifyFirmware(u32 fw_total_len, u32 *out_real_len)
      * 上限取 FLASH_A_SIZE（480KB）。W25Q128 有 16MB，本身放得下更大，
      * 但片内 APP 区只有 480KB，超了搬不进去。
      *================================================================*/
-    if (fw_total_len > FLASH_A_SIZE)
+    // 判断是否超过 A区大小
+     if (fw_total_len > FLASH_A_SIZE)
     {
         Usart1_SendString("BOOT VERIFY FIRMWARE: 固件超过 A 区 480KB，拒绝升级\r\n");
         return 1;
     }
 
+    // 读尾缀 28 字节
     W25Q128_Read(fw_total_len - 28, buf, 28);
+
+    // 判断魔数 是否正确
     if (buf[0] != 0xCD || buf[1] != 0xEF || buf[2] != 0xCD || buf[3] != 0xEF)
     {
         Usart1_SendString("BOOT VERIFY FIRMWARE: 无效魔数\r\n");
@@ -535,14 +842,22 @@ u8 Boot_CopyFirmware(u32 fw_len)
  * 函数：EEPROM_ReadInfo
  * 负责：B
  *
+ * 参数：无
+ * 返回：0 = 参数有效，1 = 参数无效（首次上电 / 未配置 / 数据损坏）
+ *
+ * ★ 2026-11-03 改：返回值从 void 改成 u8 ★
+ *   原来返回 void，调用方没法知道"读到的是真参数还是被清空了"，
+ *   main.c 里就写不出"参数无效时顺手写默认值"这种分支。
+ *   APP 工程里同名函数本来就返回 u8，这里统一成一样的签名。
+ *
  * 实现要点：
- *   u8 *p = (u8*)&AliInfoCB;
- *   memset(&AliInfoCB, 0, sizeof(AliInfoCB));
- *   for(i = 0; i < sizeof(AliInfoCB); i++){
+ *   u8 *p = (u8*)&BemfaInfoCB;
+ *   memset(&BemfaInfoCB, 0, sizeof(BemfaInfoCB));
+ *   for(i = 0; i < sizeof(BemfaInfoCB); i++){
  *       p[i] = EEPROM_ReadByte(EEPROM_AT24C02_ADDR, i);
  *   }
  *====================================================================*/
-void EEPROM_ReadInfo(void)
+u8 EEPROM_ReadInfo(void)
 {
     u8 i;
     u8 *p = (u8 *)&BemfaInfoCB;
@@ -561,12 +876,14 @@ void EEPROM_ReadInfo(void)
         BemfaInfoCB.valid_flag = 0; /* 保持无效状态 */
 
         Usart1_SendString("[EEPROM] 参数无效，需要重新配置\r\n");
-        return;
+        return 1;
     }
     else
     {
         Usart1_SendString("[EEPROM] 参数有效\r\n");
     }
+
+    return 0;
 }
 
 /*=====================================================================
