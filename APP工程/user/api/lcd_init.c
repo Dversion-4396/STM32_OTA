@@ -284,9 +284,15 @@ void LCD_Init(void)
     LCD_WR_REG(0xE4);                       /* GATECTRL */
     LCD_WR_DATA8(0x1D); LCD_WR_DATA8(0x00); LCD_WR_DATA8(0x00);
 
-    /* 19. 开反显（ST7789V 模组出厂多为反显，不开会整体发白/发灰）
-           ★ 如果烧上去发现黑白颠倒（该黑的地方白），把这行改成 0x20 (INVOFF) */
-    LCD_WR_REG(0x21);                       /* INVON */
+    /* 19. 反显开关
+           ★ 2026-11-02 真板实测改成 INVOFF(0x20)。
+             原代码是 INVON(0x21)，注释写着"ST7789V 模组出厂多为反显"，
+             但用户这块 10P-2D4TFT_V2.1 实测不需要反显：
+             开着 INVON 时，C_BG(0x0000 黑) 显示成白色、C_LOG(0xC618 浅灰)
+             显示成深灰 —— 整屏颜色反了，背景是白的。
+             判断方法：如果屏幕底色发白、深色文字反而看不见，就是反显开关反了。
+             改回 INVON 就把 0x20 换成 0x21。 */
+    LCD_WR_REG(0x20);                       /* INVOFF */
 
     /* 20. 正常显示模式 */
     LCD_WR_REG(0x13);                       /* NORON */
