@@ -184,8 +184,15 @@ void ActiveEvent(void)
         /* OTA 下载期间：红灯常亮 + 屏幕显示 OTA，别让人以为卡死了。
            下载最坏要几分钟，这期间主循环是阻塞的，
            LCD_UI_Update() 不会被调用 —— 所以先手动刷一次，
-           把 "OTA busy" 这个状态留在屏幕上。 */
-        g_ui_status.ota_busy = 1;
+           把 "OTA busy" 这个状态留在屏幕上。
+
+           ★2026-11-03 加：ota_state 是给屏幕上 "OTA" 那一行看的，
+             UI_OTA_EVENT 会显示成绿色的 "EVENT"（收到通知、还没开始下）。
+             进度百分比由 CAT1_OTA() 内部每 5% 回调 LCD_UI_SetOtaProgress() 更新，
+             因为那段时间主循环不转，只能靠它自己刷。 */
+        g_ui_status.ota_busy   = 1;
+        g_ui_status.ota_state  = UI_OTA_EVENT;
+        g_ui_status.ota_percent = 0;
         Led_OtaBusy(1);
         LCD_Log("OTA downloading");
         LCD_UI_Update();
@@ -195,15 +202,21 @@ void ActiveEvent(void)
             // 将事件处理标志位清零，后续跳转到 APP 区域
             BemfaInfoCB.OTA_flag = BOOT_STA_O;
             EEPROM_SaveInfo();
+            g_ui_status.ota_state = UI_OTA_DONE;    /* 屏幕显示绿色 DONE */
             LCD_Log("OTA OK, rebooting");
         }
         else
         {
+            g_ui_status.ota_state = UI_OTA_FAIL;    /* 屏幕显示红色 FAIL */
             LCD_Log("OTA FAIL");
         }
         g_ui_status.ota_busy = 0;
         Led_OtaBusy(0);
         LCD_UI_Update();
+
+        /* ★ 停 1 秒再重启：不然 DONE / FAIL 这一行刚画上去就被复位冲掉了，
+             人根本看不见下载到底是成功还是失败。 */
+        delay_ms(1000);
 
         // 如果失败则复位到 Bootloder 区域 等待下一次 OTA 事件
         NVIC_SystemReset();
@@ -482,6 +495,31 @@ int main(void)
             g_ui_status.version[vi] = vc;
         }
         g_ui_status.version[vi] = 0;
+
+        /*=================================================================
+         * 2026-11-03 加：屏幕上那一行 "VER  x.y.z"（当前运行的 APP 版本名）
+         *
+         * ★ 为什么不直接用上面刚填的 g_ui_status.version：
+         *   version 是"要上报给云端的版本号"（BemfaInfoCB.Version_ABuff），
+         *   app_ver 是"EEPROM App 信息区里记着的、BootLoader 菜单 [3] 也显示的那个"。
+         *   两者来源不同 —— 一个来自巴法云参数区，一个来自 App 信息区。
+         *   分开显示才能在屏幕上看出它们是否同步（不同步就是 bug）。
+         *
+         * ★ 为什么不用 EEPROM_Data.ver 原样拷：
+         *   EEPROM 里可能是别人写进去的乱码，界面上显示控制字符会花屏，
+         *   所以非可打印 ASCII 一律换成 '.'，和上面那段保持一致。
+         *================================================================*/
+        {
+            u8 ai;
+            for (ai = 0; ai < (UI_VER_MAX - 1) && EEPROM_Data.ver[ai] != 0; ai++)
+            {
+                char ac = EEPROM_Data.ver[ai];
+                if (ac < 0x20 || ac > 0x7E) ac = '.';
+                g_ui_status.app_ver[ai] = ac;
+            }
+            g_ui_status.app_ver[ai] = 0;
+        }
+
         LCD_UI_Refresh_All();
     }
 

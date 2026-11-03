@@ -30,16 +30,17 @@
 	│FLSH [ OK ]                   │ y=130  W25Q128 状态
 	├──────────────────────────────┤ y=146  分隔线 4px
 	│APP  RUNNING                  │ y=150  APP 运行状态
-	│EV   A0000000                 │ y=166  事件标志（十六进制）
-	│RX   42                       │ y=182  MQTT 收包数
-	├──────────────────────────────┤ y=198  分隔线 4px
-	│>wait 4G 10s                  │ y=202  日志第 1 行（最新在最后一行）
-	│>GPRS FAIL                    │ y=218  日志第 2 行
-	│>MQTT FAIL                    │ y=234  日志第 3 行
-	│>ENTER APP                    │ y=250  日志第 4 行
-	│>...                          │ y=266  日志第 5 行
-	│>...                          │ y=282  日志第 6 行
-	└──────────────────────────────┘ y=298  余 22px 留白（298..319）
+	│VER  1.0.0                    │ y=166  正在运行的 APP 版本名
+	│OTA  DN 45%                   │ y=182  OTA 事件标志（有 OTA 变绿）+ 下载进度
+	│RX   42                       │ y=198  MQTT 收包数
+	├──────────────────────────────┤ y=214  分隔线 4px
+	│>wait 4G 10s                  │ y=218  日志第 1 行（最新在最后一行）
+	│>GPRS FAIL                    │ y=234  日志第 2 行
+	│>MQTT FAIL                    │ y=250  日志第 3 行
+	│>ENTER APP                    │ y=266  日志第 4 行
+	│>...                          │ y=282  日志第 5 行
+	│>...                          │ y=298  日志第 6 行
+	└──────────────────────────────┘ y=314  余 6px 留白（314..319）
 
 	★ 状态栏右上角信号格（4 格，越高越亮）:
 	    都没连上        → 4 格全灭（暗灰）
@@ -107,11 +108,11 @@
 #define UI_DEV_STEP     16
 
 #define UI_Y_SEP4       146
-#define UI_Y_RUN        150         /* APP 运行状态 / 事件标志 / 收包数，3 行各 16px */
+#define UI_Y_RUN        150         /* APP 运行状态 / APP 版本名 / OTA 标志 / 收包数，4 行各 16px */
 #define UI_RUN_STEP     16
 
-#define UI_Y_SEP5       198
-#define UI_Y_LOG        202         /* 日志区 6 行 */
+#define UI_Y_SEP5       214
+#define UI_Y_LOG        218         /* 日志区 6 行 */
 #define UI_LOG_STEP     16
 
 /* ============================================================
@@ -127,7 +128,40 @@ typedef struct
     u8  app_running;  /* APP 主循环已在跑 = 1（进主循环前置 1） */
     u32 rx_pkts;      /* 收到的 MQTT 报文数 */
     char version[UI_VER_MAX];  /* 当前版本号（从 EEPROM 读，main.c 负责填） */
+
+    /* ---------- 2026-11-03 新增：APP 版本名 / OTA 事件标志 / 下载进度 ---------- */
+
+    /*
+       OTA 事件标志（决定屏幕上 OTA 那一行显示什么）
+         UI_OTA_IDLE    没有 OTA 事件        → 白色 "OTA  IDLE"
+         UI_OTA_EVENT   收到升级通知，待下载  → 绿色 "OTA  EVENT"（用户要求：有 OTA 就变绿）
+         UI_OTA_DOWN    正在下载             → 绿色 "OTA  DN 45%"
+         UI_OTA_DONE    下载完成，等重启升级  → 绿色 "OTA  DONE"
+         UI_OTA_FAIL    下载失败             → 红色 "OTA  FAIL"
+       ★ 这个字段和 SysEventFlag 里的 OTA_EVENT 位是两回事：
+         SysEventFlag 是"有事要处理"的队列位，处理完就清掉；
+         这个字段是"给人看的状态"，会一直留着，直到下一次状态变化。
+    */
+    u8  ota_state;
+    u8  ota_percent;  /* 下载进度 0~100 */
+
+    /*
+       正在运行的 APP 版本名（从 EEPROM 的 App 信息区读，main.c 负责填）
+       ★ 和上面的 version 有什么区别：
+         version  = 巴法云参数里的版本号（BemfaInfoCB.Version_ABuff），上报云端用；
+         app_ver  = EEPROM 独立 App 信息区里的版本名（EEPROM_Data.ver），
+                    BootLoader 菜单 [3] 显示的也是它，OTA 升级成功后由 BootLoader 改写。
+         两者正常情况下相同，但来源不同，所以分开存，出问题时一眼能看出哪个没同步。
+    */
+    char app_ver[UI_VER_MAX];
 } UI_Status;
+
+/* OTA 状态取值（给 g_ui_status.ota_state 用） */
+#define UI_OTA_IDLE     0
+#define UI_OTA_EVENT    1
+#define UI_OTA_DOWN     2
+#define UI_OTA_DONE     3
+#define UI_OTA_FAIL     4
 
 extern UI_Status g_ui_status;
 
@@ -154,5 +188,20 @@ void LCD_UI_Refresh_All(void);
 	★ 调用后立刻刷屏，不等 500ms 节拍。
 */
 void LCD_Log(const char *s);
+
+/*
+	OTA 下载进度（★ 给 cat1.c 的阻塞下载循环用）
+	------------------------------------------------------------------
+	done / total：已收字节数 / 总字节数，内部算百分比。
+
+	★ 为什么必须单独开一个函数：
+	  CAT1_OTA() 是阻塞的，下载期间主循环不转，LCD_UI_Update() 不会被调，
+	  屏幕上的进度就永远不动。所以只能由下载循环自己回调刷屏。
+
+	★ 内部已经做了"值没变就不刷"的判断，但调用方仍需节流：
+	  一次重画 ≈ 45ms，每收 256 字节就刷一次会明显拖慢下载。
+	  cat1.c 里按 5% 一档调用。
+*/
+void LCD_UI_SetOtaProgress(u32 done, u32 total);
 
 #endif

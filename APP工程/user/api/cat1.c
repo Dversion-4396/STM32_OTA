@@ -133,6 +133,7 @@
  *     否则会把 STM32 的电压拉低导致复位。
  *=====================================================================*/
 #include "cat1.h"
+#include "lcd_ui.h"     /* ★2026-11-03 加：下载进度要刷屏幕 */
 
 /*=====================================================================
  * 函数：CAT1_SendAT
@@ -445,6 +446,7 @@ u8 CAT1_OTA(char *url, u32 fw_len)
     u8 got_header = 0; /// 标记“是否已经跳过 HTTP 响应头”。
     u16 block;
     u16 i;
+    u8 last_pct = 0xFF; /// ★2026-11-03 加：上一次刷到屏幕的百分比（节流用）
 
     /* ① 入参防御：URL 空 / 大小超范围 直接拒绝 */
     if (url == NULL || url[0] == '\0')
@@ -490,6 +492,7 @@ u8 CAT1_OTA(char *url, u32 fw_len)
 
     /* ⑤ 接收循环 */
     Usart1_SendString("[OTA] 接收数据...\r\n");
+    LCD_UI_SetOtaProgress(0, fw_len);   /* 先置成"收到通知、准备下载"状态 */
     for (seg = 0; seg < 6000; seg++)
     {
         delay_ms(20);
@@ -563,6 +566,24 @@ u8 CAT1_OTA(char *url, u32 fw_len)
 
         addr += dlen;
         total += dlen;
+
+        /*
+           ★2026-11-03 加：把下载进度刷到屏幕上 ★
+          为什么必须在这里刷：CAT1_OTA 是阻塞函数，这期间 main 的主循环不转，
+          LCD_UI_Update() 根本不会被调用，屏幕上的进度会一直停着不动。
+          为什么按 5% 节流：一次重画 ≈ 45ms（6400 次 SPI 写），
+          每收 256 字节就刷一次会明显拖慢下载；整个下载最多多花约 0.7 秒。
+        */
+        {
+            u8 now_pct = (u8)((total >= fw_len) ? 100 : ((total * 100UL) / fw_len));
+
+            if (last_pct == 0xFF || now_pct >= 100 ||
+                (u8)(now_pct - last_pct) >= 5)
+            {
+                last_pct = now_pct;
+                LCD_UI_SetOtaProgress(total, fw_len);
+            }
+        }
 
         /* 进度点 */
         if ((total % 4096) < dlen)

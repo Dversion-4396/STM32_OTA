@@ -68,6 +68,11 @@ static u32  s_c_rx        = 0xFFFFFFFF;
 static u32  s_c_event     = 0xFFFFFFFF;
 static char s_c_ver[UI_VER_MAX] = { 0 };
 
+/* 2026-11-03 新增三个缓存 */
+static char s_c_appver[UI_VER_MAX] = { 0 };  /* APP 版本名 */
+static u8   s_c_ota_state = 0xFF;            /* OTA 事件标志 */
+static u8   s_c_ota_pct   = 0xFF;            /* OTA 下载百分比 */
+
 /* 节拍 */
 static u16 s_tick_ui      = 0;
 
@@ -269,18 +274,86 @@ static void ui_draw_run_app(void)
                        C_FAIL, C_BG, UI_FONT_H, 0);
 }
 
-static void ui_draw_run_event(u32 ev)
+static void ui_draw_run_ver(void)
 {
     u16 y = (u16)(UI_Y_RUN + UI_RUN_STEP);
+    char v[UI_VER_SHOW_MAX + 1];
+    u8   i;
 
     ui_clear_row(y, C_BG);
-    LCD_ShowString(0, y, (const u8 *)"EV   ", C_LABEL, C_BG, UI_FONT_H, 0);
-    LCD_ShowHex8(UI_RUN_VAL_X, y, ev, C_VAL, C_BG, UI_FONT_H);
+    LCD_ShowString(0, y, (const u8 *)"VER  ", C_LABEL, C_BG, UI_FONT_H, 0);
+
+    /*
+       ★ 为什么要拷贝一份并截断：
+         240 - 40 = 200px，200 / 8 = 25 个字符放得下，
+         但 UI_VER_SHOW_MAX 是给 2 倍大字算的 10，
+         这里 16 号字能放 25 个，取 UI_VER_MAX(24) 更保险。
+         版本名一般就 "1.0.0" 五个字符，截断是防御性写法。
+    */
+    for (i = 0; i < UI_VER_MAX - 1 && g_ui_status.app_ver[i] != 0; i++)
+        v[i] = g_ui_status.app_ver[i];
+    v[i] = 0;
+
+    if (v[0] == 0)
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)"--", C_FAIL, C_BG, UI_FONT_H, 0);
+    else
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)v, C_VAL, C_BG, UI_FONT_H, 0);
+}
+
+/*
+   OTA 事件标志 + 下载进度（用户 2026-11-03 要求：有 OTA 就变绿）
+   ------------------------------------------------------------------
+   显示规则：
+     UI_OTA_IDLE   → 白色 "IDLE"
+     UI_OTA_EVENT  → 绿色 "EVENT"     收到通知，还没开始下
+     UI_OTA_DOWN   → 绿色 "DN 45%"    下载中，带百分比
+     UI_OTA_DONE   → 绿色 "DONE"      下载完，马上重启升级
+     UI_OTA_FAIL   → 红色 "FAIL"
+   ★ 为什么整行重画而不是只改数字：
+     百分比位数会变（9% → 10% → 100%），只覆盖数字会留下上一位的尾巴。
+     一行 200px = 25 字符 = 400 像素 = 800 次 SPI 写 ≈ 6ms，
+     而且只有状态/百分比真的变了才画（见 LCD_UI_Update 的缓存判断）。
+*/
+static void ui_draw_run_ota(void)
+{
+    u16 y = (u16)(UI_Y_RUN + 2 * UI_RUN_STEP);
+    u16 x;
+
+    ui_clear_row(y, C_BG);
+    LCD_ShowString(0, y, (const u8 *)"OTA  ", C_LABEL, C_BG, UI_FONT_H, 0);
+
+    switch (g_ui_status.ota_state)
+    {
+    case UI_OTA_EVENT:
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)"EVENT", C_OK, C_BG, UI_FONT_H, 0);
+        break;
+
+    case UI_OTA_DOWN:
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)"DN ", C_OK, C_BG, UI_FONT_H, 0);
+        x = (u16)(UI_RUN_VAL_X + 3 * UI_FONT_W);
+        LCD_ShowU32(x, y, (u32)g_ui_status.ota_percent, C_OK, C_BG, UI_FONT_H);
+        /* "%" 紧跟在数字后面，按实际位数算位置，否则 5% 会显示成 "5   %" */
+        x = (u16)(x + ui_digits((u32)g_ui_status.ota_percent) * UI_FONT_W);
+        LCD_ShowString(x, y, (const u8 *)"%", C_OK, C_BG, UI_FONT_H, 0);
+        break;
+
+    case UI_OTA_DONE:
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)"DONE", C_OK, C_BG, UI_FONT_H, 0);
+        break;
+
+    case UI_OTA_FAIL:
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)"FAIL", C_FAIL, C_BG, UI_FONT_H, 0);
+        break;
+
+    default:
+        LCD_ShowString(UI_RUN_VAL_X, y, (const u8 *)"IDLE", C_VAL, C_BG, UI_FONT_H, 0);
+        break;
+    }
 }
 
 static void ui_draw_run_rx(void)
 {
-    u16 y = (u16)(UI_Y_RUN + 2 * UI_RUN_STEP);
+    u16 y = (u16)(UI_Y_RUN + 3 * UI_RUN_STEP);
 
     ui_clear_row(y, C_BG);
     LCD_ShowString(0, y, (const u8 *)"RX   ", C_LABEL, C_BG, UI_FONT_H, 0);
@@ -361,7 +434,8 @@ void LCD_UI_Init(void)
     ui_draw_dev();
     ui_sep(UI_Y_SEP4, 4);
     ui_draw_run_app();
-    ui_draw_run_event(0);
+    ui_draw_run_ver();
+    ui_draw_run_ota();
     ui_draw_run_rx();
     ui_sep(UI_Y_SEP5, 4);
     ui_draw_log();
@@ -381,6 +455,10 @@ void LCD_UI_Init(void)
     s_c_rx      = 0xFFFFFFFF;
     s_c_event   = 0xFFFFFFFF;
     s_c_ver[0]  = 0;
+
+    s_c_appver[0] = 0;
+    s_c_ota_state = 0xFF;
+    s_c_ota_pct   = 0xFF;
 
     s_tick_ui     = 0;
     s_uptime_half = 0;
@@ -462,11 +540,30 @@ u8 LCD_UI_Update(void)
         }
     }
 
-    /* 事件标志 */
-    if (SysEventFlag != s_c_event)
+    /* APP 版本名（变了才重画） */
+    if (strcmp(g_ui_status.app_ver, s_c_appver) != 0)
     {
-        s_c_event = SysEventFlag;
-        ui_draw_run_event(s_c_event);
+        strcpy(s_c_appver, g_ui_status.app_ver);
+        ui_draw_run_ver();
+        dirty = 1;
+    }
+
+    /*
+       OTA 事件标志 + 下载进度
+       ------------------------------------------------------------------
+       ★ 为什么判据是 (状态, 百分比) 两个值而不是只看 SysEventFlag：
+         下载过程中 SysEventFlag 一直是 0（事件位在处理开始时就被清了），
+         如果只看事件位，进度就永远不动。
+       ★ 为什么百分比单独存一份缓存：
+         百分比从 9 跳到 10 时位数变了，必须整行重画，
+         所以只要百分比变了就重画，而不是只重画数字那几位。
+    */
+    if (g_ui_status.ota_state != s_c_ota_state ||
+        g_ui_status.ota_percent != s_c_ota_pct)
+    {
+        s_c_ota_state = g_ui_status.ota_state;
+        s_c_ota_pct   = g_ui_status.ota_percent;
+        ui_draw_run_ota();
         dirty = 1;
     }
 
@@ -497,7 +594,56 @@ void LCD_UI_Refresh_All(void)
     s_c_event   = 0xFFFFFFFF;
     s_c_ver[0]  = 0;
 
+    s_c_appver[0] = 0;
+    s_c_ota_state = 0xFF;
+    s_c_ota_pct   = 0xFF;
+
     s_tick_ui = 49;     /* 下一轮立刻刷新状态 */
+}
+
+/*=====================================================================
+ * OTA 下载进度（供 cat1.c 在阻塞下载循环里调用）
+ *====================================================================*/
+void LCD_UI_SetOtaProgress(u32 done, u32 total)
+{
+    u8 pct;
+    u8 st;
+
+    if (total == 0)
+        return;
+
+    if (done > total)
+        done = total;
+
+    pct = (u8)((done * 100UL) / total);
+
+    /* 还没收到数据时别刷 "DN 0%"，保持在 EVENT 状态 */
+    st = (pct == 0) ? UI_OTA_EVENT : UI_OTA_DOWN;
+
+    if (st == g_ui_status.ota_state && pct == g_ui_status.ota_percent)
+        return;                 /* 没变化，一个字节都不发 */
+
+    g_ui_status.ota_state   = st;
+    g_ui_status.ota_percent = pct;
+
+    /*
+       ★ 同步更新缓存：
+         这里是"自己直接画"，画完必须把缓存也改成新值，
+         否则下一轮 LCD_UI_Update() 会认为状态变了又整行重画一次 —— 白刷。
+    */
+    s_c_ota_state = st;
+    s_c_ota_pct   = pct;
+
+    /*
+       ★ 这里直接调 ui_draw_run_ota() 而不是 LCD_UI_Update()：
+         下载期间主循环被 CAT1_OTA 占着，LCD_UI_Update 的 500ms 节流
+         永远到不了点；而且 LCD_UI_Update 会顺带重画日志和设备行，
+         在每 20ms 调一次的场景里开销太大。
+         只重画 OTA 这一行：200px x 16 = 3200 像素 = 6400 次 SPI 写 ≈ 45ms。
+         ★ 45ms 不小，所以调用方（cat1.c）必须自己节流到 5% 一次。
+    */
+    if (s_ui_ready)
+        ui_draw_run_ota();
 }
 
 /*=====================================================================
