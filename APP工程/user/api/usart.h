@@ -2,7 +2,12 @@
 #define _USART_H
 #include "common.h"
 /* modbus.h 已移除：与 OTA 无关 */
-#define USART3_BUFFER_SIZE (1024)   /* ★改为 1024：HTTP 下载一次返回约 274 字节★ */
+/* ★2026-11-04 改：1024 -> 2048
+   现象：OTA 下载时串口报"接受超过最大长度"，缓冲一满中断就丢字节，
+         丢了以后 $HTTPRECV:DATA, 对不上，后面全是"未找到标识符"。
+   2000 字节 ≈ 173ms 的余量，足够覆盖一次刷屏（45ms，约 520 字节）。
+   注意：USART_Data 结构体三个实例共用这个尺寸，实际占 3 × 2048 = 6KB。 */
+#define USART3_BUFFER_SIZE (4096)
 #define USART1_BUFFER_SIZE (256)
 #define USART2_BUFFER_SIZE (256)
 typedef struct
@@ -51,6 +56,12 @@ void Usart3_SendByte(u8 byte);
 void Usart3_SendBuffer(char *Buffer, u16 len);
 
 void Usart3_SendString(const char *str);
+/* main.c 里的 4G 报文分发入口。
+ * ★为什么放在 usart.h★
+ *   mqtt.c 在等 CONNACK 时需要自己"边收边处理"，
+ *   而 U3_EventDispatch 定义在 main.c，没有头文件声明就调不到。 */
+void U3_EventDispatch(u8 *data, u16 len);
+
 void RS485_Init(u16 brr);
 void RS485_SendBuffer(u8 *data, u16 count);
 

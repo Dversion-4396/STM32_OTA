@@ -180,7 +180,10 @@ u8 Flash_SelfTest(void)
         return 1;
     }
     Usart1_SendString("擦除成功\r\n");
-    if (Flash_Write(FLASH_A_ADDR, write_buf, 256) != 0)
+    /* ★2026-11-04 修：原来硬写 256，而 write_buf 只有 16 字节，
+       Flash_Write 会越界读 240 字节栈上的垃圾写进 Flash。
+       用 sizeof 让它永远和数组一致。 */
+    if (Flash_Write(FLASH_A_ADDR, write_buf, sizeof(write_buf)) != 0)
     {
         Usart1_SendString("写入失败\r\n");
         return 1;

@@ -58,10 +58,10 @@
 #define MQTT_PACKAGE_SIZE  512             /* MQTT 报文缓冲区大小 */
 
 /*=====================巴法云相关宏定义=====================*/
-#define USERNAME_KEY "a0f83060ae0a4750a09d1607611f3b32" // 巴法云平台秘钥
+#define USERNAME_KEY "536cd706bafe4b10a4ddb1f7570f9893" // 巴法云平台秘钥
 #define SERVER_IP "bemfa.com"                           // 巴法云订阅主题地址
 #define SERVER_PORT (9501)                              // 巴法云订阅主题端口号
-#define TOPIC_1 "123"                                   // 巴法云订阅主题 1
+#define TOPIC_1 "qian1"                                 // 巴法云订阅主题 1
 #define TOPIC_2 "abc"                                   // 巴法云订阅主题 2
 
 /* ★新增：保存最近一条 PUBLISH 报文里的 Topic 名字，
@@ -209,7 +209,7 @@ void MQTT_PublishQs1(char *topic, char *data, int len);
  *   发送后置 PING_SENT 标志，收到 PINGRESP 清标志。
  *   连续两次没收到 PINGRESP 说明掉线了，要重连。
  *-------------------------------------------------------------------*/
-void MQTT_PingREQ(void);
+u8 MQTT_PingREQ(void);
 
 /*---------------------------------------------------------------------
  * 函数：U2PassiveEvent

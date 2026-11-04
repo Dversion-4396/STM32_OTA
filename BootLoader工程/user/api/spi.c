@@ -70,6 +70,7 @@ void SPI2_Init(void)
         所以第一个边沿为下降沿，而第二个边沿为上升沿
     */
     SPI_InitStructure.SPI_CPOL = SPI_CPOL_High;
+    
     // 第二个边沿为有效边沿
     SPI_InitStructure.SPI_CPHA = SPI_CPHA_2Edge;
 

@@ -37,6 +37,11 @@
 #define NET_STA             GPIO_ReadInputDataBit(CAT1_CTRL_PORT, NET_STA_PIN)
 #define PWR_STA             GPIO_ReadInputDataBit(CAT1_CTRL_PORT, STATUS_PIN)
 
+#define OTA_TAIL_LEN   28UL      /* ota_pack.py 追加的包尾 */
+#define OTA_CACHE_SIZE 512U      /* 搬运缓存，= 2 个 Flash 页 */
+
+static u8  s_cache[OTA_CACHE_SIZE];
+static u16 s_cache_len;
 
 
 #define URL_LEN (600)

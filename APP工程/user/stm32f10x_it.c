@@ -131,6 +131,12 @@ void PendSV_Handler(void)
   * @brief  This function handles SysTick Handler.
   * @param  None
   * @retval None
+  *
+  * ★注意：本文件在 Keil 工程里的 IncludeInBuild = 0，【不参与编译】★
+  *   所以这里的函数体永远不会被执行，改它没用。
+  *   1ms 系统时基的 SysTick_Handler 实际写在 api/delay.c 里。
+  *   如果哪天要把本文件纳入编译，必须先去 delay.c 删掉那份，
+  *   否则会报 multiply defined。
   */
 void SysTick_Handler(void)
 {

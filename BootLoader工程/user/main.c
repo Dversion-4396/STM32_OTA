@@ -52,7 +52,7 @@ int main(void)
 
     Usart1_SendString("\r\n\r\n");
     Usart1_SendString("==========================================\r\n");
-    Usart1_SendString("     战神V1 BootLoader  v3.0\r\n");
+    Usart1_SendString("     战神V1 BootLoader  v3.2\r\n");
     Usart1_SendString("     分区：Boot 32KB / APP 480KB\r\n");
     Usart1_SendString("==========================================\r\n");
 

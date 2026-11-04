@@ -97,6 +97,9 @@ void BootLoader_Info(void)
     Usart1_SendString("[2] 跳转到 APP\r\n");
     Usart1_SendString("[3] 查看当前 APP（版本名/版本号/大小）\r\n");
     Usart1_SendString("[4] OTA 升级搬运（从 W25Q128 搬到 A 区）\r\n");
+    Usart1_SendString("[5] 查看回退备份（上一次升级前的版本）\r\n");
+    Usart1_SendString("[6] 回退到备份版本（把备份搬回 A 区）\r\n");
+    Usart1_SendString("[7] 备份当前 APP（手动刷新回退点）\r\n");
     Usart1_SendString("========================================\r\n");
     Usart1_SendString("请输入选项：");
 }
@@ -184,7 +187,6 @@ void BootLoader_Event(u8 *data, u16 len)
 
     case '3':
         // (9.3) 查看当前 APP 信息
-        //
         // ★ 数据从哪来 ★
         //   APP 每次启动时会把"自己是谁、什么版本、多大"写进 EEPROM，
         //   这里读的就是那份数据。如果 APP 从来没跑过（新板子/刚擦过），
@@ -359,6 +361,88 @@ void BootLoader_Event(u8 *data, u16 len)
         }
         break;
 
+    case '5':
+        // (9.6) 查看回退备份
+        Boot_BakShow();
+        break;
+
+    case '6':
+        // (9.7) 回退：把备份搬回 A 区
+        //
+        // ★为什么给一个"清空式确认"★
+        //   回退会覆盖当前 APP，是最危险的操作之一（仅次于 [1] 擦除）。
+        //   所以这里先打印目标版本和长度，要求再输字母 y 才真的动手；
+        //   输错任何一个键（或 10 秒不输入）都直接放弃。
+        {
+            u32 blen = 0;
+            u32 bnum = 0;
+            u32 bsum = 0;
+            char bver[EEPROM_VER_SIZE];
+
+            if (Boot_BakReadHdr(&blen, &bnum, &bsum, bver) != 0)
+            {
+                Usart1_SendString("\r\n[回退] 没有可用的备份\r\n");
+                BootLoader_Info();
+                break;
+            }
+
+            sprintf(buf, "\r\n[回退] 将把 %s (%lu, %lu 字节) 写回 A 区\r\n",
+                    (bver[0] != 0) ? bver : "(未知)",
+                    (unsigned long)bnum, (unsigned long)blen);
+            Usart1_SendString(buf);
+            Usart1_SendString("[回退] 当前 APP 会被覆盖。确认请输入字母 y，其他键取消：");
+
+            usart1_value.flag  = 0;
+            usart1_value.count = 0;
+
+            {
+                u16 wait;
+
+                for (wait = 0; wait < 100; wait++)   /* 最多等 10 秒 */
+                {
+                    if (usart1_value.flag)
+                    {
+                        break;
+                    }
+                    delay_ms(100);
+                }
+            }
+
+            if (usart1_value.flag && (usart1_value.data[0] == 'y' || usart1_value.data[0] == 'Y'))
+            {
+                Usart1_SendString("\r\n");
+                (void)Boot_Rollback();
+            }
+            else
+            {
+                Usart1_SendString("\r\n[回退] 已取消\r\n");
+            }
+            usart1_value.flag  = 0;
+            usart1_value.count = 0;
+            BootLoader_Info();
+        }
+        break;
+
+    case '7':
+        // (9.8) 手动备份当前 APP
+        //
+        // 为什么要手动这一步：
+        //   自动备份只发生在“即将升级”时（Boot_DoUpgrade 里）。
+        //   如果你刚用串口烧了一个能跑的基线版本，
+        //   W25Q128 里可能还是上一代（甚至是有 bug 的）副本。
+        //   按这里把它刷成当前这个能跑的版本。
+        Usart1_SendString("\r\n");
+        if (Boot_BackupCurrent() == 0)
+        {
+            Usart1_SendString("[7] 备份完成，现在 [6] 回退到的就是这个版本\r\n");
+        }
+        else
+        {
+            Usart1_SendString("[7] 备份未完成（原因见上）\r\n");
+        }
+        BootLoader_Info();
+        break;
+
     default:
 
         // (9.5) 输入错误，提示并重显菜单
@@ -366,6 +450,404 @@ void BootLoader_Event(u8 *data, u16 len)
         BootLoader_Info();
         break;
     }
+}
+
+/*=====================================================================
+ * 备份 / 回退（2026-11-04 新增）
+ *
+ * ★为什么需要★
+ *   OTA 升级的动作是"擦掉 A 区 480KB 再写新的"，旧固件在擦除那一刻就没了。
+ *   新固件如果跑不起来（连不上 MQTT、死机、白屏），现场只能拆机接 ST-Link。
+ *   所以升级前先把当前能跑的 APP 备份进 W25Q128，菜单 [6] 可以一键搬回来。
+ *
+ * ★放在 W25Q128 哪里★
+ *   0x000000 ~ 0x07FFFF   OTA 下载暂存区（APP 端擦的是 block 0~7，正好 512KB）
+ *   0x080000 ~ 0x080FFF   备份头（一个 4KB 扇区）
+ *   0x081000 起           备份镜像
+ *   APP 只擦到 512KB 为止，永远碰不到备份区。
+ *
+ * ★备份头 32 字节格式（按字节下标读写，不依赖结构体对齐）★
+ *   0..3    'B' 'A' 'K' '1'   魔数
+ *   4..7    镜像长度（字节，已按 256 对齐）
+ *   8..11   版本号数值（1.0.2 = 10002）
+ *   12..15  镜像累加校验和（逐字节相加，u32 自然回绕）
+ *   16..22  版本名字符串（最多 7 字符 + '\0'）
+ *   23..31  0xFF 填充
+ *
+ * ★为什么校验和用"逐字节相加"而不是 MD5★
+ *   BootLoader 里没有 MD5 实现（Boot_VerifyFirmware 只比对了尾缀里的值）。
+ *   备份是本地 Flash 到本地 Flash 的拷贝，出错只有"没写完"这一种，
+ *   累加和足够发现。真要更强，等以后把 utils_md5.c 挪过来再换。
+ *====================================================================*/
+#define BAK_BASE_ADDR    0x00080000UL              /* 512KB 处 */
+#define BAK_HDR_ADDR     (BAK_BASE_ADDR)
+#define BAK_IMG_ADDR     (BAK_BASE_ADDR + 0x1000UL)
+#define BAK_HDR_LEN      32U
+#define BAK_SEC_SIZE     4096UL
+
+static void Bak_PutU32(u8 *p, u32 v)
+{
+    p[0] = (u8)(v & 0xFF);
+    p[1] = (u8)((v >> 8) & 0xFF);
+    p[2] = (u8)((v >> 16) & 0xFF);
+    p[3] = (u8)((v >> 24) & 0xFF);
+}
+
+static u32 Bak_GetU32(const u8 *p)
+{
+    return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
+}
+
+static u32 Bak_Sum(const u8 *p, u32 n)
+{
+    u32 s = 0;
+    u32 i;
+
+    for (i = 0; i < n; i++)
+    {
+        s += (u32)p[i];
+    }
+    return s;
+}
+
+/*---------------------------------------------------------------------
+ * 从 A 区末尾往回找最后一个非 0xFF 的字节，得出当前 APP 实际占多少
+ *
+ * ★为什么不直接用 EEPROM_Data.app_size★
+ *   APP 启动时写进去的是 Image$$ER_IROM1$$Limit - FLASH_A_ADDR，
+ *   这个值【不含 RW 段的 Flash 初值副本】；
+ *   而 BootLoader 升级完写进去的是完整镜像长度（含 RW 副本）。
+ *   两个口径差一百多字节 —— 备份要是按小的那个截断，
+ *   回退之后的固件末尾就缺一块，RW 初值全是垃圾，跑不起来。
+ *   直接扫 Flash 最可靠，代价是几毫秒的读操作。
+ *-------------------------------------------------------------------*/
+static u32 Bak_ScanAppLen(void)
+{
+    static u8 buf[FLASH_PAGE_SIZE];
+    u32 page;
+    u32 i;
+
+    for (page = FLASH_A_PAGE_NUM; page > 0; page--)
+    {
+        u32 off = (page - 1) * FLASH_PAGE_SIZE;
+
+        Flash_Read(FLASH_A_ADDR + off, buf, FLASH_PAGE_SIZE);
+        for (i = FLASH_PAGE_SIZE; i > 0; i--)
+        {
+            if (buf[i - 1] != 0xFF)
+            {
+                return off + i;
+            }
+        }
+    }
+    return 0;
+}
+
+/*---------------------------------------------------------------------
+ * 读备份头
+ * 返回：0 = 有效；1 = 没有备份（魔数不对）；2 = 头内容非法
+ *-------------------------------------------------------------------*/
+u8 Boot_BakReadHdr(u32 *img_len, u32 *ver_num, u32 *sum, char *ver)
+{
+    u8 h[BAK_HDR_LEN];
+    u32 i;
+
+    W25Q128_Read(BAK_HDR_ADDR, h, BAK_HDR_LEN);
+    if (h[0] != 'B' || h[1] != 'A' || h[2] != 'K' || h[3] != '1')
+    {
+        return 1;
+    }
+
+    *img_len = Bak_GetU32(&h[4]);
+    *ver_num = Bak_GetU32(&h[8]);
+    *sum     = Bak_GetU32(&h[12]);
+
+    for (i = 0; i < (u32)(EEPROM_VER_SIZE - 1); i++)
+    {
+        ver[i] = (char)h[16 + i];
+    }
+    ver[EEPROM_VER_SIZE - 1] = '\0';
+
+    if (*img_len == 0 || *img_len > FLASH_A_SIZE)
+    {
+        return 2;
+    }
+    return 0;
+}
+
+/*---------------------------------------------------------------------
+ * 备份当前 A 区到 W25Q128
+ * 返回：0 = 成功；1 = 当前没有可备份的 APP；2/3 = 写失败
+ *
+ * ★调用时机：Boot_DoUpgrade() 里、Flash_EraseApp() 之前★
+ *   所以备份的一定是"本次要覆盖掉的、当前正在跑的那一版"。
+ *-------------------------------------------------------------------*/
+u8 Boot_BackupCurrent(void)
+{
+    static u8 buf[256];
+    u8  hdr[BAK_HDR_LEN];
+    u8  v[8];
+    u32 sp;
+    u32 rv;
+    u32 len;
+    u32 sum = 0;
+    u32 i;
+    u16 sec;
+    char nb[16];
+
+    (void)EEPROM_LoadAppInfo(&EEPROM_Data);
+
+    /* ① 先确认当前 A 区里确实有一个能跑的镜像 */
+    Flash_Read(FLASH_A_ADDR, v, 8);
+    sp = Bak_GetU32(&v[0]);
+    rv = Bak_GetU32(&v[4]);
+    if (sp < 0x20000000 || sp > 0x20010000 ||
+        rv < FLASH_A_ADDR || rv >= (FLASH_A_ADDR + FLASH_A_SIZE))
+    {
+        Usart1_SendString("[备份] 当前 A 区没有可运行的镜像，跳过备份\r\n");
+        return 1;
+    }
+
+    len = Bak_ScanAppLen();
+    if (len == 0)
+    {
+        Usart1_SendString("[备份] 读不到 APP 长度，跳过备份\r\n");
+        return 1;
+    }
+    len = (len + 255UL) & ~255UL;          /* 按 256 对齐，W25Q128 整页写 */
+    if (len > FLASH_A_SIZE)
+    {
+        len = FLASH_A_SIZE;
+    }
+
+    /* ② 擦备份区要用的扇区：1 个头 + 镜像若干 */
+    Usart1_SendString("[备份] 备份当前 APP 到 W25Q128");
+    sec = (u16)(BAK_BASE_ADDR / BAK_SEC_SIZE);
+    for (i = 0; i < (1UL + (len + BAK_SEC_SIZE - 1UL) / BAK_SEC_SIZE); i++)
+    {
+        W25Q128_EraseSector((u16)(sec + i));
+        Usart1_SendString(".");
+    }
+
+    /* ③ 写镜像，顺便算校验和 */
+    for (i = 0; i < len; i += 256UL)
+    {
+        Flash_Read(FLASH_A_ADDR + i, buf, 256);
+        sum += Bak_Sum(buf, 256);
+
+        if (W25Q128_Write(BAK_IMG_ADDR + i, buf, 256) != 0)
+        {
+            Usart1_SendString("\r\n[备份] 写 W25Q128 失败\r\n");
+            return 2;
+        }
+        if (i % 4096UL == 0)
+        {
+            Usart1_SendString(".");
+        }
+    }
+
+    /* ④ 头最后写：镜像没写完时头是空的，回退会拒绝，不会搬半截 */
+    hdr[0] = 'B';
+    hdr[1] = 'A';
+    hdr[2] = 'K';
+    hdr[3] = '1';
+    Bak_PutU32(&hdr[4],  len);
+    Bak_PutU32(&hdr[8],  EEPROM_Data.ver_num);
+    Bak_PutU32(&hdr[12], sum);
+    for (i = 0; i < (u32)(EEPROM_VER_SIZE - 1); i++)
+    {
+        hdr[16 + i] = (u8)EEPROM_Data.ver[i];
+    }
+    hdr[16 + EEPROM_VER_SIZE - 1] = 0;
+    for (i = (u32)(16 + EEPROM_VER_SIZE); i < BAK_HDR_LEN; i++)
+    {
+        hdr[i] = 0xFF;
+    }
+
+    if (W25Q128_Write(BAK_HDR_ADDR, hdr, BAK_HDR_LEN) != 0)
+    {
+        Usart1_SendString("\r\n[备份] 写备份头失败\r\n");
+        return 3;
+    }
+
+    sprintf(nb, "%lu", (unsigned long)len);
+    Usart1_SendString("\r\n[备份] 完成，已保存 ");
+    Usart1_SendString(nb);
+    Usart1_SendString(" 字节；需要回退时进菜单按 [6]\r\n");
+    return 0;
+}
+
+/*---------------------------------------------------------------------
+ * 打印备份信息（菜单 [5]）
+ *-------------------------------------------------------------------*/
+void Boot_BakShow(void)
+{
+    u32 len = 0;
+    u32 vnum = 0;
+    u32 sum = 0;
+    char ver[EEPROM_VER_SIZE];
+    char buf[80];
+    u8 ret;
+
+    Usart1_SendString("\r\n--- 回退备份 ---\r\n");
+
+    ret = Boot_BakReadHdr(&len, &vnum, &sum, ver);
+    if (ret != 0)
+    {
+        Usart1_SendString("  没有备份（还没做过 OTA 升级，或备份被覆盖）\r\n");
+        Usart1_SendString("  说明：每次 [4] OTA 升级前，会自动把当前 APP 备份一份\r\n");
+    }
+    else
+    {
+        sprintf(buf, "  备份版本名: %s\r\n", (ver[0] != 0) ? ver : "(未知)");
+        Usart1_SendString(buf);
+        sprintf(buf, "  备份版本号: %lu\r\n", (unsigned long)vnum);
+        Usart1_SendString(buf);
+        sprintf(buf, "  备份长度  : %lu 字节 (%lu KB)\r\n",
+                (unsigned long)len, (unsigned long)(len / 1024));
+        Usart1_SendString(buf);
+        sprintf(buf, "  存放位置  : W25Q128 0x%06lX 起\r\n",
+                (unsigned long)BAK_IMG_ADDR);
+        Usart1_SendString(buf);
+        Usart1_SendString("  输入 [6] 可以把这一份搬回 A 区（覆盖当前 APP）\r\n");
+    }
+    Usart1_SendString("----------------\r\n");
+    BootLoader_Info();
+}
+
+/*---------------------------------------------------------------------
+ * 回退：把备份搬回 A 区
+ * 返回：0 = 成功；1 = 没有备份；2 = 校验和不符；3 = 向量表非法
+ *       4 = 擦除失败；5 = 写入失败
+ *
+ * ★顺序刻意和升级一致：先校验，再擦，再写★
+ *   校验不过时 A 区一个字节都没动，当前 APP 还能接着跑。
+ *-------------------------------------------------------------------*/
+u8 Boot_Rollback(void)
+{
+    static u8 buf[FLASH_PAGE_SIZE];
+    u32 len = 0;
+    u32 vnum = 0;
+    u32 sum = 0;
+    u32 calc = 0;
+    u32 i;
+    u32 n;
+    u32 sp;
+    u32 rv;
+    u8  v[8];
+    u8  ret;
+    char ver[EEPROM_VER_SIZE];
+    char nb[80];
+
+    Usart1_SendString("\r\n[回退] 检查备份...\r\n");
+
+    ret = Boot_BakReadHdr(&len, &vnum, &sum, ver);
+    if (ret != 0)
+    {
+        Usart1_SendString("[回退] 没有可用的备份，放弃\r\n");
+        return 1;
+    }
+
+    /* ① 先把备份整份读一遍算校验和，不对就绝不碰 A 区 */
+    for (i = 0; i < len; i += 256UL)
+    {
+        W25Q128_Read(BAK_IMG_ADDR + i, buf, 256);
+        calc += Bak_Sum(buf, 256);
+    }
+    if (calc != sum)
+    {
+        sprintf(nb, "[回退] 备份校验和不符（存=%lu 算=%lu），放弃\r\n",
+                (unsigned long)sum, (unsigned long)calc);
+        Usart1_SendString(nb);
+        return 2;
+    }
+
+    /* ② 向量表检查：栈顶在 SRAM、复位向量在 APP 区 */
+    W25Q128_Read(BAK_IMG_ADDR, v, 8);
+    sp = Bak_GetU32(&v[0]);
+    rv = Bak_GetU32(&v[4]);
+    if (sp < 0x20000000 || sp > 0x20010000 ||
+        rv < FLASH_A_ADDR || rv >= (FLASH_A_ADDR + FLASH_A_SIZE))
+    {
+        sprintf(nb, "[回退] 备份向量表非法（栈顶=0x%08lX 复位=0x%08lX），放弃\r\n",
+                (unsigned long)sp, (unsigned long)rv);
+        Usart1_SendString(nb);
+        return 3;
+    }
+
+    sprintf(nb, "[回退] 目标版本 %s (%lu)，长度 %lu 字节\r\n",
+            (ver[0] != 0) ? ver : "(未知)",
+            (unsigned long)vnum, (unsigned long)len);
+    Usart1_SendString(nb);
+
+    /* ③ 擦 A 区 */
+    Usart1_SendString("[回退] 开始擦除 APP 区（约 3 秒）...\r\n");
+    if (Flash_EraseApp() != 0)
+    {
+        Usart1_SendString("[回退] 擦除失败\r\n");
+        return 4;
+    }
+
+    /* ④ 搬回 */
+    Usart1_SendString("[回退] 搬运中");
+    for (i = 0; i < len; i += FLASH_PAGE_SIZE)
+    {
+        n = len - i;
+        if (n > FLASH_PAGE_SIZE)
+        {
+            n = FLASH_PAGE_SIZE;
+        }
+        W25Q128_Read(BAK_IMG_ADDR + i, buf, n);
+        if (n % 2)
+        {
+            buf[n] = 0xFF;                 /* Flash_Write 只接受偶数字节 */
+            n++;
+        }
+        if (Flash_Write(FLASH_A_ADDR + i, buf, n) != 0)
+        {
+            Usart1_SendString("\r\n[回退] 写片内 Flash 失败\r\n");
+            return 5;
+        }
+        if (i % 8192UL == 0)
+        {
+            Usart1_SendString(".");
+        }
+    }
+    Usart1_SendString("\r\n");
+
+    /* ⑤ 版本信息也一起回退 */
+    (void)EEPROM_LoadAppInfo(&EEPROM_Data);
+    memset(EEPROM_Data.ver, 0, sizeof(EEPROM_Data.ver));
+    strncpy(EEPROM_Data.ver, ver, EEPROM_VER_SIZE - 1);
+    EEPROM_Data.ver[EEPROM_VER_SIZE - 1] = '\0';
+    EEPROM_Data.ver_num  = vnum;
+    EEPROM_Data.app_size = len;
+    EEPROM_Data.new_len     = 0;
+    EEPROM_Data.new_ver_num = 0;
+    EEPROM_Data.new_ver[0]  = '\0';
+    if (EEPROM_SaveAppInfo(&EEPROM_Data) != 0)
+    {
+        Usart1_SendString("[回退] 版本信息写 EEPROM 失败（固件已搬回）\r\n");
+    }
+
+    /* ★云端版本号也要回退★
+       APP 每次启动都会把 BemfaInfoCB.Version_ABuff 抄进 EEPROM_Data.ver。
+       不回退这一份的话，回退完成、APP 一跑，
+       菜单 [3] 又变回新版本号，云端也以为还是新版本，
+       与实际运行的固件对不上。 */
+    memset(BemfaInfoCB.Version_ABuff, 0, sizeof(BemfaInfoCB.Version_ABuff));
+    strncpy((char *)BemfaInfoCB.Version_ABuff, ver,
+            sizeof(BemfaInfoCB.Version_ABuff) - 1);
+    BemfaInfoCB.Version_ABuff[sizeof(BemfaInfoCB.Version_ABuff) - 1] = '\0';
+
+    /* ⑥ 清掉"有 OTA 事件"的标志，否则下次开机又自动去搬暂存区那份 */
+    BemfaInfoCB.OTA_flag    = 0;
+    BemfaInfoCB.OTA_firelen = 0;
+    (void)EEPROM_SaveInfo();
+
+    BootClear_Flag = 0;                    /* A 区已经有内容了，[2] 可以跳转 */
+    Usart1_SendString("[回退] 完成，输入 [2] 跳转到该版本\r\n");
+    return 0;
 }
 
 /*=====================================================================
@@ -399,6 +881,15 @@ u8 Boot_DoUpgrade(u32 new_len, u32 new_ver_num, const char *new_ver)
     if (Boot_VerifyFirmware(new_len, &real_len) != 0)
     {
         return 1;
+    }
+
+    /* ---- 第 1.5 步：备份当前 APP（回退用，2026-11-04 新增） ----
+     *   必须在 Flash_EraseApp 之前，备份的才是"即将被覆盖的、现在正在跑的"那一版。
+     *   备份失败不阻止升级：备份是保险，不是前提；
+     *   真失败了也只是"这次升级后没有回退目标"，照样能升。 */
+    if (Boot_BackupCurrent() != 0)
+    {
+        Usart1_SendString("[升级] 备份未完成，本次升级后没有回退目标（不影响升级）\r\n");
     }
 
     /* ---- 第 2 步：擦除 APP 区 ---- */

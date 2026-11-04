@@ -24,6 +24,7 @@ ota_pack.py —— 给 Keil 编译出来的 bin 追加 28 字节 OTA 尾缀。
     python ota_pack.py --verify 工程文件_ota.bin     # 反向校验尾缀
 """
 import hashlib
+import re
 import struct
 import sys
 import os
@@ -43,6 +44,37 @@ def build_footer(raw: bytes) -> bytes:
     )
 
 
+# 版本字符串匹配：X.Y.Z 后跟 '\0'（C 字符串常量的形状）
+VER_RE = re.compile(rb"(?<![0-9.])(\d{1,3}\.\d{1,3}\.\d{1,3})\x00")
+
+
+def find_version(raw: bytes):
+    """从镜像里把版本号找出来。
+
+    为什么从镜像里读而不是让人手填：
+      版本号在整条链路里只应该有一处定义（main.c 的 FW_VERSION_STR），
+      镜像里就带着这份字符串。打包时直接读出来拼通知，
+      人就不用在源码 / 控制台 / 通知 三个地方各敲一遍。
+    """
+    hits = VER_RE.findall(raw)
+    return sorted({h.decode() for h in hits})
+
+
+def pick_version(vers):
+    """从候选里挑一个。
+
+    为什么会有多个：
+      镜像里除了固件自带的 FW_VERSION_STR，
+      还有 eeprom.c 里“空片默认值 1.0.0”这类字符串。
+    为什么取最大：
+      版本号只增不减，默认值永远是最低的那个，
+      取最大就能稳定挑到真正编译进去的版本。
+    """
+    if not vers:
+        return None
+    return max(vers, key=lambda v: tuple(int(x) for x in v.split(".")))
+
+
 def pack(src: str, dst: str = None) -> str:
     raw = open(src, "rb").read()
     footer = build_footer(raw)
@@ -56,6 +88,19 @@ def pack(src: str, dst: str = None) -> str:
     print(f"       MD5      : {hashlib.md5(raw).hexdigest()}")
     print(f"       尾缀     : {footer.hex()}")
     print(f"       输出     : {dst}  ({len(raw) + FOOTER_LEN} 字节)")
+
+    # ★版本号从镜像里取，人不手填★
+    vers = find_version(raw)
+    total = len(raw) + FOOTER_LEN
+    pick = pick_version(vers)
+    if pick is not None:
+        extra = "" if len(vers) == 1 else f"   (候选 {vers}，取最大)"
+        print(f"       版本号   : {pick}{extra}")
+        print(f"       发送通知 : <链接>,{total},{pick}")
+    elif not vers:
+        print("       ★镜像里没找到 X.Y.Z 版本字符串，通知里的版本号需要手填")
+        print(f"       长度记住是 : {total}")
+
     return dst
 
 

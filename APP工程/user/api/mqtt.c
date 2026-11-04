@@ -1,4 +1,4 @@
-/*=====================================================================
+﻿/*=====================================================================
  * 文件：mqtt.c
  * 说明：MQTT 协议实现（巴法云 bemfa）
  * 负责：C
@@ -97,6 +97,21 @@ void MQTT_Init(void)
      *=================================================================
      * 本实现：ClientID / Username / Password 全部填私钥（方式一）
      *================================================================*/
+    /* ★2026-11-04 加：先关掉模块回显（ATE0）★
+     *
+     * 实测真相（2026-11-04 13:5x，抓 CIPSEND 回包才看到）：
+     *   模块是回显开着的，发 AT+CIPSEND 后它会把命令原样吐回来；
+     *   CAT1_SendAT 在匹配到 ">" 时清缓冲，只清掉了一半，
+     *   残余的回显尾巴比如 ",114\r\n" 跟在下一帧开头。
+     *   于是真正的 CONNACK（0x20 0x02 0x01 0x00）被这个
+     *   前导废字节挡住，U3_SkipTcpPrefix 不认，整帧被丢。
+     *   后果：CONNECT_EVENT 永远不置位 -> 心跳不发 -> 服务器超时踢人。
+     *
+     * 关掉回显之后，帧头就干净了：
+     *   \r\n+CIPRXGET:SUCCESS,0,0,4,\r\n<4 字节数据>\r\n
+     * U3_SkipTcpPrefix 本来就能处理开头的 '+'，不用改。 */
+    (void)CAT1_SendAT("ATE0", "OK", 2000);
+
     /* ★优先用 EEPROM 里的参数；没有（首次上电）才退回宏里的测试值★ */
     if (BemfaInfoCB.valid_flag != VALID_BEMFA_DATA ||
         BemfaInfoCB.UID_Buff[0] == '\0')
@@ -218,6 +233,11 @@ u8 MQTT_ConnectBemfa(void)
      * 手册格式：AT+QICSGP=1,1,"","",""
      * 三个空字符串 = APN/用户名/密码，留空用 SIM 卡默认
      *------------------------------------------------*/
+    /* ★2026-11-04 加：重连前先把上一次的"已连接/等心跳"状态清干净★
+     *   不清的话，上一次的 CONNECT_EVENT 还挂着，主循环会以为
+     *   MQTT 还活着，继续对一条正在重建的链路发心跳。 */
+    SysEventFlag &= ~(CONNECT_EVENT | PING_SENT | PING_CHECK);
+
     Usart1_SendString("[MQTT] 1.配置APN\r\n");
     ret = CAT1_SendAT("AT+QICSGP=1,1,\"CMNET\",\"\",\"\",1", "OK", 10000);
     if (ret != 0)
@@ -229,19 +249,50 @@ u8 MQTT_ConnectBemfa(void)
         return 1;
     }
 
-    /*---------- ② 开启移动网络 ★这一步之前完全漏了★ ----------
+    /*---------- ② 开启移动网络 ----------
      * 手册：B. 开启移动网络：AT+NETOPEN
      * 成功响应：+NETOPEN:SUCCESS
+     *
+     * ★★★ 2026-11-03 真板踩坑：这里不能无条件发 AT+NETOPEN ★★★
+     *
+     * 现象：SIM 卡、注册、PDP 全都正常（真板诊断实测）
+     *         AT+CPIN?    → +CPIN: READY
+     *         AT+CSQ      → +CSQ: 26,99      （信号很好）
+     *         AT+CREG?    → +CREG: 0,1       （已注册）
+     *         AT+CGATT?   → +CGATT: 1        （已附着）
+     *         AT+CGACT?   → +CGACT: 1,1      （PDP 已激活）
+     *         AT+CGPADDR  → +CGPADDR: 1, "10.212.41.244"  （IP 有了）
+     *         AT+NETOPEN? → +NETOPEN:1       （★网络已经开着★）
+     *       但发 AT+NETOPEN 却回 ERROR: 902。
+     *
+     * 原因：本模块的 PDP 在 AT+CGACT=1,1 之后就自动把网络打开了，
+     *       AT+NETOPEN 再发一次 = 重复开启，模块直接回 ERROR: 902。
+     *       （902 在这个固件里就是"网络已经打开"的意思）
+     *
+     * 修法：先查状态，已经是 1 就跳过。
+     *       注意 AT+NETOPEN? 的回复是 "+NETOPEN:1"（数字），
+     *       而 AT+NETOPEN 的回复是 "+NETOPEN:SUCCESS"（字符串），
+     *       两者格式不同，不能共用一个 expect。
      *------------------------------------------------*/
-    Usart1_SendString("[MQTT] 2.开启移动网络\r\n");
-    ret = CAT1_SendAT("AT+NETOPEN", "NETOPEN:SUCCESS", 30000);
-    if (ret != 0)
+    Usart1_SendString("[MQTT] 2.检查移动网络\r\n");
+    ret = CAT1_SendAT("AT+NETOPEN?", "+NETOPEN:1", 5000);
+    if (ret == 0)
     {
-        Usart1_SendString("[MQTT] NETOPEN失败\r\n");
-        Usart1_SendString("[MQTT] 响应: [");
-        Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
-        Usart1_SendString("]\r\n");
-        return 2;
+        Usart1_SendString("[MQTT] 网络已开启，跳过 NETOPEN\r\n");
+    }
+    else
+    {
+        Usart1_SendString("[MQTT] 网络未开启，发 AT+NETOPEN\r\n");
+        ret = CAT1_SendAT("AT+NETOPEN", "NETOPEN:SUCCESS", 30000);
+        if (ret != 0)
+        {
+            Usart1_SendString("[MQTT] NETOPEN失败\r\n");
+            Usart1_SendString("[MQTT] 响应: [");
+            Usart1_SendBuffer((char *)usart3_value.data, usart3_value.count);
+            Usart1_SendString("]\r\n");
+            return 2;
+        }
+        Usart1_SendString("[MQTT] 网络已开启\r\n");
     }
 
     /*---------- ③ 建立 TCP 连接 ----------
@@ -249,10 +300,38 @@ u8 MQTT_ConnectBemfa(void)
      * 成功响应：+CIPOPEN: SUCCESS,0
      *------------------------------------------------*/
     Usart1_SendString("[MQTT] 3.建立TCP连接\r\n");
+
+    /* ★2026-11-04 加：先关掉可能残留的链路 0★
+     *   现象：+CIPOPEN: FAIL,0 后面紧跟 +SERVER DISCONNECTED:0。
+     *   说明上一次的会话没干净关闭，模块认为链路 0 还占着，
+     *   这时再 CIPOPEN 同一个 link 号必然 FAIL。
+     *   CIPCLOSE 失败无所谓（本来就没连接），所以忽略返回值。 */
+    (void)CAT1_SendAT("AT+CIPCLOSE=0", "OK", 2000);
+
     sprintf(cmd, "AT+CIPOPEN=0,\"TCP\",\"%s\",%d",
             Bemfa_mqtt.ServerIP, Bemfa_mqtt.ServerPort);
 
     ret = CAT1_SendAT(cmd, "CIPOPEN: SUCCESS", 20000);
+
+    /* ★2026-11-04 加：域名失败就退回 IP 再试一次★
+     *   4G 模块自带的 DNS 经常没配好，域名解析不了就 CIPOPEN FAIL。
+     *   退回 IP 能连上 -> 就是 DNS 的问题，日志会明确写出来。
+     *   注意：IP 是 2026-11-04 实测 bemfa.com 解析结果，理论上会变；
+     *        如果哪天两个都连不上，很可能是这个 IP 换了，
+     *        用电脑 ping 一下 bemfa.com 拿到新 IP 改这里就行。 */
+    if (ret != 0)
+    {
+        Usart1_SendString("[MQTT] 域名连不上，改用 IP 重试\r\n");
+        (void)CAT1_SendAT("AT+CIPCLOSE=0", "OK", 2000);
+        sprintf(cmd, "AT+CIPOPEN=0,\"TCP\",\"%s\",%d",
+                "119.91.109.180", Bemfa_mqtt.ServerPort);
+        ret = CAT1_SendAT(cmd, "CIPOPEN: SUCCESS", 20000);
+        if (ret == 0)
+        {
+            Usart1_SendString("[MQTT] ★IP 能连、域名连不上 -> 模块 DNS 有问题\r\n");
+        }
+    }
+
     if (ret != 0)
     {
         Usart1_SendString("[MQTT] TCP连接失败\r\n");
@@ -274,8 +353,49 @@ u8 MQTT_ConnectBemfa(void)
         return 4;
     }
 
-    /* 等 CONNACK（U2PassiveEvent 会处理，这里只等一会儿） */
-    delay_ms(2000);
+    /*---------- ④.1 主动等 CONNACK（2026-11-04 重写）----------
+     * ★原来这里是 delay_ms(2000)，是个坑★
+     *   CONNACK 在那 2 秒里确实进了 usart3 缓冲区，但没人处理；
+     *   紧接着 MQTT_Subscribe() → CAT1_SendMQTTPacket() 里有
+     *   "usart3_value.count = 0"，顺手把 CONNACK 一起扔了。
+     *
+     *   后果是一连串的：
+     *     CONNACK 丢 → CONNECT_EVENT 永远不置位 → 主循环那段心跳
+     *     根本不执行（它包在 if (SysEventFlag & CONNECT_EVENT) 里）
+     *     → 一个 PINGREQ 都不发 → 服务器按 CONNECT 里声明的
+     *     KeepAlive=100s 判超时踢人 → 模块上报 +SERVER DISCONNECTED
+     *     → 重连 → 又丢 CONNACK …… 表现就是"连一会儿掉、掉了重连"。
+     *
+     *   现在改成边收边处理：拿到 CONNACK 才继续订阅；4 秒还没等到
+     *   就判定本次连接作废，置 CONNECT_START 让主循环重来，
+     *   而不是带着一个"假死"的连接往下走。
+     *------------------------------------------------------------*/
+    {
+        u16 w;
+
+        for (w = 0; w < 40; w++)        /* 40 × 100ms = 最多 4 秒 */
+        {
+            if (usart3_value.flag)
+            {
+                usart3_value.flag = 0;
+                U3_EventDispatch(usart3_value.data, usart3_value.count);
+                usart3_value.count = 0;
+            }
+            if (SysEventFlag & CONNECT_EVENT)
+            {
+                break;
+            }
+            delay_ms(100);
+        }
+    }
+
+    if ((SysEventFlag & CONNECT_EVENT) == 0)
+    {
+        Usart1_SendString("[MQTT] ★4 秒内没收到 CONNACK，本次连接作废，稍后重连\r\n");
+        (void)CAT1_SendAT("AT+CIPCLOSE=0", "OK", 2000);
+        SysEventFlag |= CONNECT_START;      /* 交给主循环重来 */
+        return 5;
+    }
 
     /*---------- ⑤ 订阅 Topic ----------*/
     Usart1_SendString("[MQTT] 5.订阅主题\r\n");
@@ -517,7 +637,7 @@ void MQTT_PublishQs1(char *topic, char *data, int len)
  * 函数：MQTT_PingREQ
  * 负责：C（从 36 号工程移植）
  *=====================================================================*/
-void MQTT_PingREQ(void)
+u8 MQTT_PingREQ(void)
 {
     /*=================================================================
      * 功能：发送 PINGREQ 心跳包（2 字节，最简单的一条 MQTT 报文）
@@ -536,7 +656,11 @@ void MQTT_PingREQ(void)
      *================================================================*/
     static u8 pack[2] = {0xC0, 0x00};
 
-    CAT1_SendMQTTPacket(pack, 2);
+    /* ★2026-11-04 改：把发送结果返回给调用者★
+     *   原来这里不管成不成功都是 void，CIPSEND 没拿到 '>' 也悄无声息，
+     *   结果就是"心跳看着在发，其实一个都没出去"，服务器 100 秒后踢人，
+     *   现象是"连一会儿就掉线"，而且日志里什么都看不出来。 */
+    return CAT1_SendMQTTPacket(pack, 2);
 }
 
 /*=====================================================================
@@ -664,8 +788,36 @@ void U2PassiveEvent(u8 *data, u16 len)
         {
             if (CAT1_ParseOTA(Bemfa_mqtt.cmdbuff) == 0)
             {
-                SysEventFlag |= OTA_EVENT;
-                Usart1_SendString(" [MQTT] 收到 OTA 命令\r\n");
+                /* ★2026-11-03 新增：下载前先比版本号，不新就别下 ★
+                 *
+                 * 为什么要在下载前拦一道：
+                 *   4G 流量是按字节算钱的，一个 480KB 的固件下下来要
+                 *   近 0.5MB 流量。如果云端反复下发同一个版本（比如
+                 *   BootLoader 那边因为别的原因没升上去），设备就会
+                 *   一次次白下载。
+                 *
+                 * 判据：new_ver_num 是 CAT1_ParseOTA 刚从通知里解析
+                 *   出来的「新版本号」，ver_num 是 EEPROM 里记着的
+                 *   「当前正在跑的版本号」。
+                 *   - new_ver_num == 0：通知里没带版本号（老格式），
+                 *     保持原行为，照样下载，但不升级。
+                 *   - new_ver_num <= ver_num：不比当前新，直接跳过，
+                 *     连下载都不做。
+                 *
+                 * 注意：这只是省流量的一道前置过滤，真正的判断在
+                 *   BootLoader 菜单 [4] / ActiveEvent 里还会再做一次。
+                 *   两道都留着，因为 APP 侧可能没收到通知、直接靠
+                 *   串口触发升级，那条路上没有这道过滤。 */
+                if (EEPROM_Data.new_ver_num != 0 &&
+                    EEPROM_Data.new_ver_num <= EEPROM_Data.ver_num)
+                {
+                    Usart1_SendString(" [MQTT] 版本不比当前新，跳过下载\r\n");
+                }
+                else
+                {
+                    SysEventFlag |= OTA_EVENT;
+                    Usart1_SendString(" [MQTT] 收到 OTA 命令\r\n");
+                }
             }
             else
             {

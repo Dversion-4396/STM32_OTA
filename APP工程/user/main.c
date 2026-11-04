@@ -71,9 +71,17 @@
 BemfaInfo_CB BemfaInfoCB;      /* 巴法云参数 + OTA 状态 */
 u32 SysEventFlag = 0;          /* 系统事件标志（位掩码） */
 u8 URL_ABuff[OTA_URL_LEN + 1]; /* OTA 下载地址缓冲区 */
-u32 ConnectTimer = 0;          /* 连上服务器后的计时（秒） */
-u32 PingTimer = 0;             /* 上次发 PING 的时间（秒） */
+u32 ConnectTimer = 0;          /* 主循环圈数（已停用，心跳改用毫秒时基） */
+u32 PingTimer = 0;             /* ★单位已改为毫秒★ 上次发 PING 的时刻 */
 
+/* ★2026-11-03 加：心跳间隔。改这一个数就行，别再去改主循环里的比较值。
+   巴法云建议 30~60 秒；超过 60 秒容易被判超时踢下线。 */
+#define PING_INTERVAL_MS   30000u
+
+/* ★2026-11-04 加：本包心跳的发出时刻，用来判断 PINGRESP 有没有超时 */
+static u32 s_ping_sent_ms = 0;
+
+// 剥离函数
 static u16 U3_SkipTcpPrefix(u8 *data, u16 len)
 {
     u16 pos = 0;
@@ -130,6 +138,26 @@ static u16 U3_SkipTcpPrefix(u8 *data, u16 len)
     return pos;
 }
 
+// 在二进制缓冲里找一段 ASCII 关键字（usart3_value.data 没有 '\0' 结尾，不能直接用 strstr）
+static u8 U3_Contains(u8 *buf, u16 len, const char *key)
+{
+    u16 klen = (u16)strlen(key);
+    u16 i;
+
+    if (len < klen)
+    {
+        return 0;
+    }
+    for (i = 0; i + klen <= len; i++)
+    {
+        if (memcmp(buf + i, key, klen) == 0)
+        {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 // 收到 4G 模块的报文，判断是什么事件
 void U3_EventDispatch(u8 *data, u16 len)
 {
@@ -148,7 +176,78 @@ void U3_EventDispatch(u8 *data, u16 len)
         return;
     }
 
-    off = U3_SkipTcpPrefix(data, len);
+    /*=================================================================
+     * ★2026-11-04 加：先看模块有没有报告"连接已断开"★
+     *
+     * 为什么必须放在剥离前缀之前：
+     *   模块上报的是 "\r\n+SERVER DISCONNECTED:0\r\n"，
+     *   U3_SkipTcpPrefix 会把 "+...:" 连同冒号一起剥掉，
+     *   剩下的 "0" 首字节不是 MQTT 类型，于是整条消息被丢掉 ——
+     *   程序完全不知道已经掉线，还在往死链路发心跳。
+     *
+     * 这是"连一会儿就掉线、掉线后不恢复"的直接原因。
+     *================================================================*/
+    if (U3_Contains(data, len, "SERVER DISCONNECTED") ||
+        U3_Contains(data, len, "CIPOPEN FAIL"))
+    {
+        if (SysEventFlag & CONNECT_EVENT)
+        {
+            Usart1_SendString("[MQTT] ★模块报告连接已断开，准备重连\r\n");
+        }
+        SysEventFlag &= ~CONNECT_EVENT;
+        SysEventFlag &= ~PING_SENT;
+        SysEventFlag |= CONNECT_START;
+        /* 不 return：这一帧后面可能还带着最后一包 MQTT 数据 */
+    }
+
+    /*=================================================================
+     * ★2026-11-04 改：优先按 "+CIPRXGET://u2026//r//n</u6570/u636e>" 取载荷★
+     *
+     * 实测（L511-2，固件 02.01b07）：
+     *   模块开着回显，且 TCP 数据不是裸推，而是先来一行
+     *     +CIPRXGET:SUCCESS,0,0,4,\r\n
+     *   再跟 4 字节真数据。同一帧里还夹着上一条 AT 的回显
+     *   （"OK\r\n\r\n+CIPSEND=0,114" 这种），
+     *   所以原来“从帧首开始剥前缀”永远落在 'O' 或 ','上，
+     *   真正的 CONNACK（0x20 0x02 0x01 0x00）连同整帧被丢。
+     *   后果：CONNECT_EVENT 永远不置位 -> 心跳不发 -> 服务器超时踢人
+     *        -> 重连 -> 又丢 …… 无限循环。
+     *
+     * 现在：先找帧里最后一个 "+CIPRXGET"，跳过它那一行的 \n，
+     * 剩下的就是真数据；没有这个标记才退回原来的前缀剥离。
+     *=================================================================*/
+    {
+        int last = -1;
+        u16 i;
+
+        for (i = 0; (u16)(i + 9) <= len; i++)
+        {
+            if (memcmp(&data[i], "+CIPRXGET", 9) == 0)
+            {
+                last = (int)i;
+            }
+        }
+
+        if (last >= 0)
+        {
+            u16 k = (u16)last;
+
+            while (k < len && data[k] != '\n')
+            {
+                k++;
+            }
+            if (k < len)
+            {
+                k++;                        /* 跳过 '\n' */
+            }
+            off = k;
+        }
+        else
+        {
+            off = U3_SkipTcpPrefix(data, len);
+        }
+    }
+
     if (off >= len)
     {
         Usart1_SendString("U3_EventDispatch: 剥离后没有数据\r\n");
@@ -199,11 +298,45 @@ void ActiveEvent(void)
 
         if (CAT1_OTA((char *)URL_ABuff, BemfaInfoCB.OTA_firelen) == 0)
         {
+            /* ★2026-11-04 改：下载成功后才提交"已有待升级固件"★
+                原来这个动作在 CAT1_ParseOTA（收到通知那一刻）就做了，
+                可此时一个字节都还没下。下载失败时 BootLoader 仍会
+                认为有固件而去搬残包。
+                现在两步：
+                 ① 收到通知时 new_len 先清 0（cat1.c 里已改）
+                 ② 这里下载完、长度严格相等之后，才写回真实长度
+               BootLoader 菜单 [4] 判据是 new_len > 0，因此半包永远不会被搬。 */
+            u8 save_ok = 1;
+
+            EEPROM_Data.new_len = BemfaInfoCB.OTA_firelen;
+            if (EEPROM_SaveAppInfo(&EEPROM_Data) != 0)
+            {
+                save_ok = 0;
+            }
+
             // 将事件处理标志位清零，后续跳转到 APP 区域
             BemfaInfoCB.OTA_flag = BOOT_STA_O;
-            EEPROM_SaveInfo();
-            g_ui_status.ota_state = UI_OTA_DONE;    /* 屏幕显示绿色 DONE */
-            LCD_Log("OTA OK, rebooting");
+            if (EEPROM_SaveInfo() != 0)
+            {
+                save_ok = 0;
+            }
+
+            if (save_ok)
+            {
+                g_ui_status.ota_state = UI_OTA_DONE;    /* 屏幕显示绿色 DONE */
+                LCD_Log("OTA OK, rebooting");
+            }
+            else
+            {
+                /* 状态没存进去就别让 BootLoader 拿半截记录去搬：
+                   new_len 清 0 再存一次，宁可这次不升级 */
+                EEPROM_Data.new_len = 0;
+                (void)EEPROM_SaveAppInfo(&EEPROM_Data);
+                BemfaInfoCB.OTA_flag = 0;
+                (void)EEPROM_SaveInfo();
+                g_ui_status.ota_state = UI_OTA_FAIL;
+                LCD_Log("OTA save FAIL");
+            }
         }
         else
         {
@@ -231,6 +364,89 @@ void ActiveEvent(void)
     }
 }
 
+// 具体实现功能区,如需添加或修改实现功能直接修改即可
+//void My_App(void);
+
+/*=====================================================================
+ * 版本号的唯一真源：FW_VERSION_STR
+ * 版本号的唯一写入点：AppInfo_CommitVersion()
+ *
+ * 为什么要这么收拢：
+ *   版本号在系统里有 3 个出现位置，但只应该有 1 个“定义”：
+ *     ① 镜像里编译进去的字符串        <- 唯一真源
+ *     ② BemfaInfoCB.Version_ABuff     <- EEPROM 副本（MQTT 上报读它）
+ *     ③ EEPROM_Data.ver / ver_num     <- EEPROM 副本（BootLoader 菜单 [3] 读它）
+ *
+ *   副本躲不掉：BootLoader 是独立编译的，读不到 APP 镜像里的常量，
+ *   只能读 EEPROM。那就把“写”收成一个人：开机调一次，
+ *   把两份副本一起刷成①的值。全工程不再有第二处写版本号。
+ *
+ * 为什么不能只用 EEPROM 一份（不要①）：
+ *   那就是改版本必须手改 EEPROM、或靠 FORCE_REWRITE 硬刷，
+ *   一旦忘了就出现“跑着新代码、嘴上说旧版本”。
+ *
+ * 为什么不能只用①（不要副本）：
+ *   BootLoader 读不到它，菜单 [3] 和版本比较都没数据了。
+ *=====================================================================*/
+#define FW_VERSION_STR         "1.0.3"
+
+/* 把镜像里的版本同步进 EEPROM 的两份缓存；不一致才写，一致就不动。 */
+static void AppInfo_CommitVersion(void)
+{
+    u32 vnum;
+    u8  changed = 0;
+
+    /* 版本名 -> 版本号数值（1.0.3 -> 10003），供 BootLoader 比大小 */
+    vnum = cat1_version_to_num(FW_VERSION_STR);
+    if (vnum == 0)
+    {
+        Usart1_SendString("[VER] 版本名不是 X.Y.Z 格式，版本号按 10000 记\r\n");
+        vnum = 10000;
+    }
+
+    /* ---- 副本 ②：巴法云参数区 ---- */
+    if (strcmp((char *)BemfaInfoCB.Version_ABuff, FW_VERSION_STR) != 0)
+    {
+        memset(BemfaInfoCB.Version_ABuff, 0, sizeof(BemfaInfoCB.Version_ABuff));
+        strcpy((char *)BemfaInfoCB.Version_ABuff, FW_VERSION_STR);
+
+        if (EEPROM_SaveInfo() != 0)
+        {
+            Usart1_SendString("[VER] 写巴法云参数区失败\r\n");
+        }
+        else
+        {
+            changed = 1;
+        }
+    }
+
+    /* ---- 副本 ③：App 信息区 ---- */
+    (void)EEPROM_LoadAppInfo(&EEPROM_Data);
+    if (strcmp(EEPROM_Data.ver, FW_VERSION_STR) != 0 || EEPROM_Data.ver_num != vnum)
+    {
+        memset(EEPROM_Data.ver, 0, sizeof(EEPROM_Data.ver));
+        strncpy(EEPROM_Data.ver, FW_VERSION_STR, EEPROM_VER_SIZE - 1);
+        EEPROM_Data.ver[EEPROM_VER_SIZE - 1] = '\0';
+        EEPROM_Data.ver_num = vnum;
+
+        if (EEPROM_SaveAppInfo(&EEPROM_Data) != 0)
+        {
+            Usart1_SendString("[VER] 写 App 信息区失败\r\n");
+        }
+        else
+        {
+            changed = 1;
+        }
+    }
+
+    if (changed)
+    {
+        Usart1_SendString("[VER] EEPROM 版本缓存已同步为 ");
+        Usart1_SendString(FW_VERSION_STR);
+        Usart1_SendString("\r\n");
+    }
+}
+
 /*=====================================================================
  * 函数：main
  * 功能：程序入口
@@ -242,6 +458,11 @@ int main(void)
 {
     __enable_irq();
     static u8 VersionSent = 0; /* 版本号只上报一次 */
+
+    /*---------- 0. 1ms 系统时基（必须在所有 delay 之前）----------*/
+    /* 配置 SysTick 1ms 中断，之后 delay_ms/delay_us 才准。
+       心跳计时也用 Get_Tick()，不再靠数主循环圈数。 */
+    Delay_Init();
 
     /*---------- 1. 初始化调试串口（必须最先）----------*/
     Usart1_Init(USART1_BRR);
@@ -275,10 +496,13 @@ int main(void)
     /*---------- 5. 等 4G 模块启动 ----------*/
     /* 模块上电后要 10~15 秒才能响应 AT，太早发没反应 */
     Usart1_SendString("等待 4G 模块启动...\r\n");
-    LCD_Log("wait 4G 10s");
-    delay_ms(10000);
+    LCD_Log("wait 4G 15s");
+    /* ★2026-11-03 改：原来是 10000。delay 改成真时基后，
+       10000 就是实打实 10 秒，而模块实测要 10~15 秒才响应 AT，不够。 */
+    delay_ms(15000);
 
     /*---------- 6. 激活 GPRS ----------*/
+
     /* 内部已有详细打印，失败会打印步骤号 */
     if (CAT1_ActiveGPRS() != 0)
     {
@@ -333,15 +557,31 @@ int main(void)
                 ① 临时把下面的 if 条件改成 if (1)，烧一次，写完再改回来
                 ② 换一块没写过的 EEPROM / 手动擦掉 AT24C02 前 99 字节
     */
-    if (BemfaInfoCB.valid_flag != VALID_BEMFA_DATA)
+    /* ★★★ 2026-11-03：改 UID/Topic/版本号后，EEPROM 里存的还是旧值，
+     *   valid_flag 仍是 0xDD，下面这段「写默认值」不会重跑。
+     *
+     *   所以加了这个强制开关：改成 1 编译烧录一次，开机就会无条件重写，
+     *   写完立刻改回 0 再烧一次（否则每次开机都重写 EEPROM，白耗寿命）。
+     *
+     *   AT24C02 擦写寿命 100 万次，一次重写写 99+ 字节 ≈ 99 次，
+     *   烧个几百次也到不了上限，但还是别长期开着。
+     * ------------------------------------------------------------ */
+#define FORCE_REWRITE_EEPROM   0
+
+    if (FORCE_REWRITE_EEPROM || BemfaInfoCB.valid_flag != VALID_BEMFA_DATA)
     {
         Usart1_SendString("[EEPROM] 参数无效，写入默认值\r\n");
 
         memset(&BemfaInfoCB, 0, sizeof(BemfaInfoCB));
         BemfaInfoCB.valid_flag = VALID_BEMFA_DATA;                              /* 0xDD = 参数有效 */
-        strcpy((char *)BemfaInfoCB.UID_Buff,     "a0f83060ae0a4750a09d1607611f3b32"); /* 巴法云 UID，32 位 */
-        strcpy((char *)BemfaInfoCB.Topic_Buff,   "123");                        /* 订阅的 Topic 名字 */
-        strcpy((char *)BemfaInfoCB.Version_ABuff, "1.0.0");                     /* ★ 版本号改这里，最长 23 字符 */
+        strcpy((char *)BemfaInfoCB.UID_Buff,     "536cd706bafe4b10a4ddb1f7570f9893"); /* 巴法云 UID，32 位 */
+        strcpy((char *)BemfaInfoCB.Topic_Buff,   "qian1");                      /* 订阅的 Topic 名字 */
+        /* ★ 版本号改这里，最长 23 字符
+         *   2026-11-04：OTA 已跑通，1.0.2 定为基线。
+         *   这个字符串必须和板子上实际运行的固件版本一致，
+         *   否则每次开机都会把版本写回这个值，造成云端反复重推。
+         *   下次升级就把这里改成 1.0.3，再重新打包。 */
+        strcpy((char *)BemfaInfoCB.Version_ABuff, FW_VERSION_STR);
         BemfaInfoCB.OTA_firelen = 0;                                            /* 没有待搬运的固件 */
         BemfaInfoCB.OTA_flag    = 0;                                            /* 0x5AA5C33C 才是"待升级" */
 
@@ -358,12 +598,48 @@ int main(void)
     }
     else
     {
-        /* 参数有效，打印一下当前版本号，方便核对是不是想要的版本 */
+        /* 参数有效，打印一下当前版本号，方便核对是不是想要的版本
+         * （真正的同步在下面 AppInfo_CommitVersion() 里做） */
         Usart1_SendString("[EEPROM] 当前版本号: ");
         Usart1_SendBuffer((char *)BemfaInfoCB.Version_ABuff,
                           (u16)strlen((char *)BemfaInfoCB.Version_ABuff));
         Usart1_SendString("\r\n");
     }
+
+    /* ★2026-11-04：版本号唯一写入点★
+     *   不管上面走的是“写默认值”还是“参数有效”，
+     *   这里都把两份缓存刷成镜像里的版本号，保证全局一致。 */
+    AppInfo_CommitVersion();
+
+    /*---------- 7.1.1 回显当前生效的巴法云参数 ----------*/
+    /*
+        ★ 为什么要打这一段 ★
+
+        以前改完 UID/Topic 烧进去，串口里什么都看不出来 ——
+        只能看到 "[EEPROM] 参数有效"，但没法确认里面到底是不是新值。
+        而 EEPROM 有个坑：valid_flag 是 0xDD 时那段"写默认值"根本不跑，
+        所以改了源码烧进去，实际用的还是旧值，却一点提示都没有。
+
+        这段就是用来一眼核对：
+          - 如果 UID 还是旧的 a0f83060...，说明 EEPROM 没被重写，
+            要把上面的 FORCE_REWRITE_EEPROM 改成 1 再烧一次。
+          - 如果 Topic 不是 qian1，同理。
+
+        ★ 顺便说清 Topic 的用法 ★
+          巴法云一个 Topic 只能收一路消息。本工程订阅了两个：
+            Topic_Buff       → OTA 通知走这里（云端下发升级命令）
+            Topic_Buff + "_msg" → 普通消息 + 版本上报走这里
+          所以你在巴法云控制台往 qian1 发 OTA 命令，
+          设备侧是订阅 qian1 收的；上报版本号则发到 qian1_msg。
+    */
+    Usart1_SendString("[MQTT] UID   = ");
+    Usart1_SendString((char *)BemfaInfoCB.UID_Buff);
+    Usart1_SendString("\r\n");
+    Usart1_SendString("[MQTT] Topic = ");
+    Usart1_SendString((char *)BemfaInfoCB.Topic_Buff);
+    Usart1_SendString("  (OTA 收这个, 上报发 ");
+    Usart1_SendString((char *)BemfaInfoCB.Topic_Buff);
+    Usart1_SendString("_msg)\r\n");
 
     /*=================================================================
      * ★★ 7.2 把自己的版本信息写进 EEPROM 的 App 信息区 ★★
@@ -393,27 +669,13 @@ int main(void)
      *   先读出来（读失败会自动填默认值），只改要改的字段，再写回去。
      *================================================================*/
     {
-        u8 vi;
-
         /* ① 先读现有信息（读失败也会填默认值，不会留下空结构体） */
         (void)EEPROM_LoadAppInfo(&EEPROM_Data);
 
-        /* ② 版本名：直接抄 BemfaInfoCB 里的那份，保证两边一致 */
-        memset(EEPROM_Data.ver, 0, sizeof(EEPROM_Data.ver));
-        for (vi = 0; vi < (EEPROM_VER_SIZE - 1) && BemfaInfoCB.Version_ABuff[vi] != 0; vi++)
-        {
-            EEPROM_Data.ver[vi] = (char)BemfaInfoCB.Version_ABuff[vi];
-        }
-        EEPROM_Data.ver[vi] = '\0';
-
-        /* ③ 版本号：由版本名换算成数值（1.0.0 → 10000） */
-        EEPROM_Data.ver_num = cat1_version_to_num(EEPROM_Data.ver);
-        if (EEPROM_Data.ver_num == 0)
-        {
-            /* 版本名不是"数字.数字.数字"格式，退化成 10000 并提示 */
-            Usart1_SendString("[EEPROM] ★版本名格式不是 X.Y.Z，版本号按 10000 记\r\n");
-            EEPROM_Data.ver_num = 10000;
-        }
+        /* ②③ 版本名 / 版本号：★不在这里写★
+         *   版本号只有一个写入点：AppInfo_CommitVersion()（上面已调过）。
+         *   这里只负责把"APP 实际占多大"写进去，避免两处各写一半、
+         *   以后改版本时又得改两个地方。 */
 
         /* ④ 大小：APP 镜像的真实字节数
          *
@@ -574,42 +836,18 @@ int main(void)
     {
         /*=================================================================
          * 处理 4G 收到的数据
-         *
-         * 两版都保留：
-         *   【版本 A】D 的原始版本（被注释掉，框架版）
-         *   【版本 B】云端提交的版本（#if 0 包住，测试用）
-         *   正式版要选一个启用，现在两个都关着，等联调时再定
          *================================================================*/
-
-        /*---------- 【版本 A】D 的框架版（暂时注释）----------*/
-
         if (usart3_value.flag)
         {
             usart3_value.flag = 0;
             U3_EventDispatch(usart3_value.data, usart3_value.count);
             usart3_value.count = 0;
         }
-
-        /*---------- 【版本 B】云端提交版（#if 0 包住）----------
-         * 和版本 A 的差别：
-         *   多了 count 清零，避免下次收数据时追加到旧数据后面
-         *   但少了注释说明，风格不统一
-         *----------------------------------------------------------------*/
-#if 0
-        if (usart3_value.flag)
-        {
-            usart3_value.flag = 0;
-            U3_EventDispatch(usart3_value.data, usart3_value.count);
-            usart3_value.count = 0;
-        }
-#endif
 
         /* 处理主动事件（OTA 下载 / MQTT 连接等） */
         ActiveEvent();
 
-
-
-        /* TODO【C】：MQTT 心跳保活 */
+        /* MQTT 心跳保活 */
         if (SysEventFlag & CONNECT_EVENT)
         {
             /* 连上后上报一次版本号（OTA 流程第一步） */
@@ -617,14 +855,45 @@ int main(void)
             {
                 VersionSent = 1;
                 CAT1_PropertyVersion();
+                PingTimer = Get_Tick();         /* ★从这一刻开始算心跳周期 */
                 LCD_Log("ver reported");
             }
 
-            ConnectTimer++;
-            if (ConnectTimer - PingTimer >= 3000)
+            /* ★2026-11-03 改：按毫秒时基判断，不再数主循环圈数★
+               原来 ConnectTimer++ 是"每圈加 1"，主循环一转慢心跳就跟着长；
+               现在看的是真实耗时，主循环跑多快都无所谓。
+               无符号减法自动处理 48.6 天回绕，不会因为溢出而漏发。
+
+               ★2026-11-04 加：等 PINGRESP，超时就重连★
+               原来只管每 30 秒发一包，发没发出去、服务器回没回一概不管。
+               链路已经断了的时候，CIPSEND 每次还会阻塞最多 5 秒，
+               主循环跟着卡，看起来就是"掉线了还一直僵着"。
+               现在：上一包没等到 PINGRESP 就不再发新的，超过 45 秒
+               直接判定掉线，置 CONNECT_START 重连。 */
+            if (SysEventFlag & PING_SENT)
             {
-                PingTimer = ConnectTimer;
-                MQTT_PingREQ();
+                if ((u32)(Get_Tick() - s_ping_sent_ms) > 45000u)
+                {
+                    Usart1_SendString("[MQTT] ★心跳 45 秒无应答，重连\r\n");
+                    SysEventFlag &= ~CONNECT_EVENT;
+                    SysEventFlag &= ~PING_SENT;
+                    SysEventFlag |= CONNECT_START;
+                    PingTimer = Get_Tick();
+                    LCD_Log("ping timeout");
+                }
+            }
+            else if ((u32)(Get_Tick() - PingTimer) >= PING_INTERVAL_MS)
+            {
+                PingTimer = Get_Tick();
+                s_ping_sent_ms = PingTimer;
+                SysEventFlag |= PING_SENT;      /* 标记"等应答"；收到 PINGRESP 时 mqtt.c 会清掉 */
+                if (MQTT_PingREQ() != 0)
+                {
+                    /* 没发出去就别等了，直接当这一包丢了：清掉等待标志，
+                       下一轮按周期重发；连续丢会被上面的 45 秒超时兜住。 */
+                    SysEventFlag &= ~PING_SENT;
+                    Usart1_SendString("[MQTT] ★心跳发送失败（CIPSEND 没拿到提示符）\r\n");
+                }
             }
         }
 
@@ -639,9 +908,16 @@ int main(void)
          *   主循环每轮 delay_ms(10)，50 轮才真正刷一次屏。
          *   其余 49 轮它立刻返回，开销只有一次自增和比较。
          *================================================================*/
+       // My_App();
         Led_Heartbeat();
         LCD_UI_Update();
 
         delay_ms(10);
     }
 }
+
+//void My_App()
+//{
+  //  Usart1_SendString("My_App() 运行中\r\n");
+  //  Usart1_SendString("\r\n");
+//}
